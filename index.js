@@ -10,7 +10,21 @@ const app = express();
 const port = process.env.PORT || 5000;
 
 // Middleware 
-app.use(cors({ origin: process.env.NEXT_PUBLIC_APP_URL, credentials: true }));
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://your-vercel-url.vercel.app", // add this after deploying to Vercel
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+}));
 app.use(express.json());
 
 // MongoDB Connection
