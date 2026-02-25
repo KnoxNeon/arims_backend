@@ -3,38 +3,52 @@ import { MongoClient, ServerApiVersion, ObjectId } from "mongodb";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-const port = process.env.PORT || 5000
+
 dotenv.config();
-const app = express()
 
-app.use(cors())
-app.use(express.json())
+const app = express();
+const port = process.env.PORT || 5000;
 
+// Middleware 
+app.use(cors({ origin: process.env.NEXT_PUBLIC_APP_URL, credentials: true }));
+app.use(express.json());
+
+// MongoDB Connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.p0naaxz.mongodb.net/?appName=Cluster0`;
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
     strict: true,
     deprecationErrors: true,
-  }
+  },
 });
 
-async function run() {
+let db;
+
+async function connectDB() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
-    // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
-  } finally {
-    // Ensures that the client will close when you finish/error
-    // await client.close();
+    db = client.db("arims"); 
+    console.log("✅ Connected to MongoDB Atlas");
+  } catch (err) {
+    console.error("❌ MongoDB connection error:", err);
+    process.exit(1);
   }
 }
-run().catch(console.dir);
 
+// Routes 
+
+app.get("/", (req, res) => {
+  res.send("Hello from ARIMS backend");
+});
+
+app.get("/api/test", (req, res) => {
+  res.status(200).json({ status: "🚀 Server is running" });
+});
+
+// REGISTER
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -67,6 +81,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
+// LOGIN
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -95,6 +110,54 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+// GOOGLE AUTH
+app.post("/api/auth/google", async (req, res) => {
+  try {
+    const { name, email, googleId, image } = req.body;
+
+    if (!name || !email || !googleId)
+      return res.status(400).json({ error: "Missing required fields." });
+
+    const usersCollection = db.collection("users");
+
+    let user = await usersCollection.findOne({ email });
+
+    if (user) {
+      await usersCollection.updateOne(
+        { email },
+        { $set: { googleId, image, updatedAt: new Date() } }
+      );
+
+      return res.status(200).json({
+        id:    user._id.toString(),
+        name:  user.name,
+        email: user.email,
+        image: user.image,
+      });
+    }
+
+    const result = await usersCollection.insertOne({
+      name,
+      email,
+      googleId,
+      image,
+      password:  null,
+      createdAt: new Date(),
+    });
+
+    res.status(201).json({
+      id:    result.insertedId.toString(),
+      name,
+      email,
+      image,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong." });
+  }
+});
+
+// GET USER BY ID
 app.get("/api/users/:id", async (req, res) => {
   try {
     const usersCollection = db.collection("users");
@@ -114,15 +177,7 @@ app.get("/api/users/:id", async (req, res) => {
   }
 });
 
-app.get("/api/test", (req, res) => {
-  res.status(200).json({ status: "🚀 Server is running" });
+//  Start Server 
+connectDB().then(() => {
+  app.listen(port, () => console.log(`🚀 Server running on port ${port}`));
 });
-
-
-app.get('/', (req, res) =>{
-    res.send("Hello from backend")
-})
-
-app.listen(port, () =>{
-    console.log(`Server running on ${port}`)
-})
