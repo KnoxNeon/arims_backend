@@ -3,6 +3,9 @@ import { MongoClient, ServerApiVersion, ObjectId } from "mongodb";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import nodemailer from "nodemailer";
+import crypto from "crypto";
+import bodyParser from "body-parser";
 
 dotenv.config();
 
@@ -25,7 +28,10 @@ app.use(cors({
   },
   credentials: true,
 }));
+app.use(bodyParser.json());   
+app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // MongoDB Connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.p0naaxz.mongodb.net/?appName=Cluster0`;
@@ -185,6 +191,117 @@ app.get("/api/users/:id", async (req, res) => {
       return res.status(404).json({ error: "User not found." });
 
     res.status(200).json(user);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong." });
+  }
+});
+
+// FORGOT PASSWORD
+app.post("/api/auth/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email)
+      return res.status(400).json({ error: "Email is required." });
+
+    const usersCollection = db.collection("users");
+    const user = await usersCollection.findOne({ email });
+
+    if (!user)
+      return res.status(200).json({ message: "If this email exists you will receive a reset link." });
+
+    // OAuth user — no password to reset
+    if (!user.password)
+      return res.status(400).json({ error: "This account uses Socials(e.g. Google, Github etc.) to sign in. Please use that to login instead." });
+
+    // Generate a secure random token
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour expiry time
+
+    // Save token to MongoDB
+    await usersCollection.updateOne(
+      { email },
+      { $set: { resetToken, resetTokenExpiry } }
+    );
+
+    // Build reset link
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+    // Setup Nodemailer
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_APP_PASSWORD,
+      },
+    });
+
+    // Send email
+    await transporter.sendMail({
+      from: `"ARIMS Support" <${process.env.GMAIL_USER}>`,
+      to: email,
+      subject: "Reset Your ARIMS Password",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <div style="background: #4F46E5; padding: 24px; border-radius: 8px 8px 0 0;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">ARIMS</h1>
+            <p style="color: #CADCFC; margin: 4px 0 0;">AI Resume & Interview Mastery System</p>
+          </div>
+          <div style="background: #f9f9f9; padding: 32px; border-radius: 0 0 8px 8px;">
+            <h2 style="color: #1E293B;">Reset Your Password</h2>
+            <p style="color: #64748B;">Hi ${user.name}, we received a request to reset your password.</p>
+            <p style="color: #64748B;">Click the button below to reset it. This link expires in <strong>1 hour</strong>.</p>
+            <a href="${resetLink}" 
+               style="display: inline-block; background: #4F46E5; color: white; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: bold; margin: 16px 0;">
+              Reset Password
+            </a>
+            <p style="color: #94A3B8; font-size: 13px;">If you didn't request this, you can safely ignore this email.</p>
+            <p style="color: #94A3B8; font-size: 12px;">Or copy this link: ${resetLink}</p>
+          </div>
+        </div>
+      `,
+    });
+
+    res.status(200).json({ message: "If this email exists you will receive a reset link." });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong." });
+  }
+});
+
+// RESET PASSWORD 
+app.post("/api/auth/reset-password", async (req, res) => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password)
+      return res.status(400).json({ error: "Token and password are required." });
+
+    const usersCollection = db.collection("users");
+
+    // Find user with this token and check it hasn't expired
+    const user = await usersCollection.findOne({
+      resetToken: token,
+      resetTokenExpiry: { $gt: new Date() }, // token must not be expired
+    });
+
+    if (!user)
+      return res.status(400).json({ error: "Invalid or expired reset link. Please request a new one." });
+
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    // Update password and remove the reset token
+    await usersCollection.updateOne(
+      { _id: user._id },
+      {
+        $set:   { password: hashedPassword, updatedAt: new Date() },
+        $unset: { resetToken: "", resetTokenExpiry: "" }, // clean up token
+      }
+    );
+
+    res.status(200).json({ message: "Password reset successfully. You can now log in." });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Something went wrong." });
