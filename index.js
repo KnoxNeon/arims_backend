@@ -115,9 +115,57 @@ app.post("/api/auth/login", async (req, res) => {
     if (!user)
       return res.status(404).json({ error: "No user found with this email." });
 
+    // Check if account is locked
+    if (user.lockUntil && user.lockUntil > new Date()) {
+      const minutesLeft = Math.ceil((user.lockUntil - new Date()) / 1000 / 60);
+      return res.status(403).json({
+        error: `Account locked due to too many failed attempts. Try again in ${minutesLeft} minute${minutesLeft > 1 ? "s" : ""}.`,
+      });
+    }
+
+    // Validate password 
     const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid)
-      return res.status(401).json({ error: "Invalid password." });
+
+    if (!isValid) {
+      const failedAttempts = (user.failedLoginAttempts || 0) + 1;
+      const MAX_ATTEMPTS = 5;
+
+      if (failedAttempts >= MAX_ATTEMPTS) {
+        // Lock the account for 15 minutes
+        await usersCollection.updateOne(
+          { email },
+          {
+            $set: {
+              failedLoginAttempts: failedAttempts,
+              lockUntil: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+            },
+          }
+        );
+        return res.status(403).json({
+          error: "Account locked due to too many failed attempts. Try again in 15 minutes.",
+        });
+      }
+
+      // Not locked yet — increment failed attempts and warn user
+      await usersCollection.updateOne(
+        { email },
+        { $set: { failedLoginAttempts: failedAttempts } }
+      );
+
+      const attemptsLeft = MAX_ATTEMPTS - failedAttempts;
+      return res.status(401).json({
+        error: `Invalid password. ${attemptsLeft} attempt${attemptsLeft > 1 ? "s" : ""} remaining before account is locked.`,
+      });
+    }
+
+    // Login successful — reset failed attempts
+    await usersCollection.updateOne(
+      { email },
+      {
+        $set:   { failedLoginAttempts: 0, updatedAt: new Date() },
+        $unset: { lockUntil: "" }, 
+      }
+    );
 
     res.status(200).json({
       id:    user._id.toString(),
