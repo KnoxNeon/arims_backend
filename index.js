@@ -1,13 +1,35 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import bcrypt from "bcryptjs";
 import { MongoClient, ServerApiVersion, ObjectId } from "mongodb";
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
 import bodyParser from "body-parser";
+import multer from "multer";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import Groq from "groq-sdk";
 
-dotenv.config();
+// Multer Setup (file upload)
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === "application/pdf") {
+      cb(null, true);
+    } else {
+      cb(new Error("Only PDF files are allowed."));
+    }
+  },
+});
+
+// GROQ Setup
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -353,6 +375,86 @@ app.post("/api/auth/reset-password", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Something went wrong." });
+  }
+});
+
+// RESUME ANALYZER
+app.post("/api/resume/analyze", upload.single("resume"), async (req, res) => {
+  try {
+    // Check file was uploaded
+    if (!req.file) {
+      return res.status(400).json({ error: "Please upload a PDF file." });
+    }
+
+// Extract text from PDF
+const uint8Array = new Uint8Array(req.file.buffer)
+const pdfData = await getDocument({ data: uint8Array }).promise;
+let resumeText = "";
+
+for (let i = 1; i <= pdfData.numPages; i++) {
+  const page = await pdfData.getPage(i);
+  const content = await page.getTextContent();
+  const pageText = content.items.map((item) => item.str).join(" ");
+  resumeText += pageText + "\n";
+}
+
+if (!resumeText || resumeText.trim().length === 0) {
+  return res.status(400).json({ error: "Could not extract text from PDF. Make sure it is not a scanned image." });
+}
+
+// Send to Groq
+const completion = await groq.chat.completions.create({
+  model: "llama-3.3-70b-versatile", // free and very capable
+  messages: [
+    {
+      role: "system",
+      content: `You are an expert ATS (Applicant Tracking System) resume analyzer. 
+      Analyze the resume and return a JSON response with exactly this structure:
+      {
+        "atsScore": <number between 0-100>,
+        "scoreBreakdown": {
+          "formatting": <number 0-100>,
+          "keywords": <number 0-100>,
+          "experience": <number 0-100>,
+          "education": <number 0-100>,
+          "skills": <number 0-100>
+        },
+        "strengths": [<list of 3-5 strong points as strings>],
+        "weaknesses": [<list of 3-5 weak points as strings>],
+        "improvements": [<list of 5 specific actionable suggestions as strings>],
+        "missingKeywords": [<list of important missing keywords as strings>],
+        "summary": "<2-3 sentence overall summary>"
+      }
+      Return ONLY the JSON object, no extra text, no markdown backticks.`,
+    },
+    {
+      role: "user",
+      content: `Analyze this resume:\n\n${resumeText}`,
+    },
+  ],
+  temperature: 0.3,
+});
+
+// Parse Groq response
+const rawResponse = completion.choices[0].message.content;
+const analysis = JSON.parse(rawResponse);
+
+    // Save to MongoDB
+    const resumesCollection = db.collection("resumes");
+    await resumesCollection.insertOne({
+      userId:    req.body.userId || null,
+      fileName:  req.file.originalname,
+      analysis,
+      createdAt: new Date(),
+    });
+
+    res.status(200).json({ success: true, analysis });
+  } catch (err) {
+    console.error(err);
+    if (err.message === "Only PDF files are allowed.") {
+      return res.status(400).json({ error: err.message });
+    }
+    res.status(500).json({ error: "Something went wrong analyzing your resume." });
   }
 });
 
