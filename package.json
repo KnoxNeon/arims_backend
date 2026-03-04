@@ -21,6 +21,7 @@
   },
   "homepage": "https://github.com/KnoxNeon/arims_backend#readme",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "body-parser": "^2.2.2",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
@@ -28,5 +29,8 @@
     "groq-sdk": "^0.37.0",
     "mongodb": "^7.1.0",
     "openai": "^6.25.0"
+    "multer": "^2.1.0",
+    "nodemailer": "^8.0.1",
+    "pdfjs-dist": "^5.5.207"
   }
 }
