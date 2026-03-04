@@ -1,29 +1,76 @@
+import dotenv from "dotenv";
+dotenv.config();
 
-const express = require("express");
-const cors = require("cors");
-require("dotenv").config();
-const { MongoClient, ObjectId } = require("mongodb");
-const PORT = process.env.PORT || 5000;
+import { MongoClient, ServerApiVersion, ObjectId } from "mongodb";
+import express from "express";
+import cors from "cors";
+import Groq from 'groq-sdk';
+
+// Groq Setup
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
+});
 
 const app = express();
-app.use(cors({ origin: [process.env.FRONTNED_URL,"http://localhost:5000",process.env.NEXT_PUBLIC_APP_URL] }));
+const port = process.env.PORT || 5000;
+
+// Middleware
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://your-vercel-url.vercel.app", // add this after deploying to Vercel
+  process.env.NEXT_PUBLIC_APP_URL,
+  process.env.FRONTEND_URL,
+];
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+  }),
+);
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// MongoDB Connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.p0naaxz.mongodb.net/?appName=Cluster0`;
 
-const client = new MongoClient(uri);
+const client = new MongoClient(uri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
+});
+
 let db;
 
 async function connectDB() {
   try {
     await client.connect();
-    db = client.db(process.env.DB_NAME);
-    console.log("✅ MongoDB Connected");
+    await client.db("admin").command({ ping: 1 });
+    db = client.db("arims");
+    console.log("✅ Connected to MongoDB Atlas");
   } catch (err) {
-    console.error("❌ DB Connection Failed:", err);
+    console.error("❌ MongoDB connection error:", err);
     process.exit(1);
   }
 }
-connectDB();
+
+// Routes
+
+app.get("/", (req, res) => {
+  res.send("Hello from ARIMS backend");
+});
+
+app.get("/api/test", (req, res) => {
+  res.status(200).json({ status: "🚀 Server is running" });
+});
+
 
 
 /**
@@ -33,29 +80,24 @@ connectDB();
  */
 app.post("/api/ai/explain", async (req, res) => {
   try {
-    const { questionTopic,questionText, correctAnswer, userAnswer } = req.body;
+    const { questionTopic, questionText, correctAnswer, userAnswer } = req.body;
 
-    if (!questionTopic  || !questionText || !correctAnswer || !userAnswer) {
+    if (!questionTopic || !questionText || !correctAnswer || !userAnswer) {
       return res.status(400).json({ error: "Invalid input" });
     }
-console.log(req.body);
-    // Initialize OpenAI
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
-    });
+    console.log(req.body);
 
     // Prompt template
     const prompt = `
-You are a helpful interview assistant.
+You are an expert interview assistant.
 
-Q: "${questionText}"
+Question: "${questionText}"
 Topic: "${questionTopic}"
-
 Correct answer: "${correctAnswer}"
 User Answer: "${userAnswer}"
 
-Explain why the user's answer is right or wrong in a concise way.
-Return JSON only in the format:
+Explain briefly why the correct answer is correct and why the user is right or wrong.
+Respond ONLY in JSON format:
 {
  "correct": boolean,
  "explanation": string
@@ -64,15 +106,15 @@ Return JSON only in the format:
 Do not include any other text.
 ---`;
 
-    // Call OpenAI
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+    // Call Groq
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile", //free and very capable
       messages: [
         { role: "system", content: "You provide structured feedback for MCQ interview responses." },
-        { role: "user", content: prompt }
+        { role: "user", content: prompt },
       ],
       max_tokens: 200,
-      temperature: 0.45
+      temperature: 0.45,
     });
 
     const text = completion.choices[0].message.content.trim();
@@ -88,9 +130,8 @@ Do not include any other text.
     // Return actual output
     return res.json({
       aiExplanation: aiResult.explanation,
-      correct: aiResult.correct
+      correct: aiResult.correct,
     });
-
   } catch (err) {
     console.error("AI Explain Error:", err);
     return res.status(500).json({ error: "AI failed" });
@@ -138,7 +179,7 @@ app.post("/api/admin/questions", async (req, res) => {
       createdAt: new Date(),
       isDeleted: false,
     };
-console.log(question);
+    console.log(question);
     const result = await db.collection("questions").insertOne(question);
 
     res.json({
@@ -309,7 +350,7 @@ app.post("/api/admin/questions/bulk", async (req, res) => {
         questionText: q.questionText.trim(),
         role: q.role,
         difficulty: q.difficulty,
-        isDeleted: false
+        isDeleted: false,
       });
 
       if (existing) {
@@ -320,7 +361,7 @@ app.post("/api/admin/questions/bulk", async (req, res) => {
       await collection.insertOne({
         ...q,
         createdAt: new Date(),
-        isDeleted: false
+        isDeleted: false,
       });
 
       insertedCount++;
@@ -330,9 +371,8 @@ app.post("/api/admin/questions/bulk", async (req, res) => {
       totalReceived: questions.length,
       uniqueAfterFileCheck: uniqueQuestions.length,
       inserted: insertedCount,
-      skippedDuplicates: skippedCount
+      skippedDuplicates: skippedCount,
     });
-
   } catch (err) {
     res.status(500).json({ error: "Server Error" });
   }
@@ -446,10 +486,7 @@ app.post("/api/mcq/submit/:id", async (req, res) => {
   }
 });
 
-app.get("/", (req, res) => {
-  res.send("Hello from backend");
-});
-
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+//  Start Server
+connectDB().then(() => {
+  app.listen(port, () => console.log(`🚀 Server running on port ${port}`));
 });

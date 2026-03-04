@@ -15,15 +15,17 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "bugs": {
     "url": "https://github.com/KnoxNeon/arims_backend/issues"
   },
   "homepage": "https://github.com/KnoxNeon/arims_backend#readme",
   "dependencies": {
+    "body-parser": "^2.2.2",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "groq-sdk": "^0.37.0",
     "mongodb": "^7.1.0",
     "openai": "^6.25.0"
   }
