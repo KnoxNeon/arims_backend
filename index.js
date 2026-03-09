@@ -10,6 +10,7 @@ import bodyParser from "body-parser";
 import multer from "multer";
 import Groq from "groq-sdk";
 import PDF2Json from "pdf2json";
+import PDFDocument from "pdfkit";
 
 // Multer Setup (file upload)
 const storage = multer.memoryStorage();
@@ -34,7 +35,7 @@ const port = process.env.PORT || 5000;
 // Middleware 
 const allowedOrigins = [
   "http://localhost:3000",
-  "https://arims-bice.vercel.app/", 
+  "https://arims-bice.vercel.app", 
   process.env.NEXT_PUBLIC_APP_URL,
   process.env.FRONTEND_URL,
 ];
