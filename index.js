@@ -36,6 +36,7 @@ const port = process.env.PORT || 5000;
 const allowedOrigins = [
   "http://localhost:3000",
   "https://arims-bice.vercel.app", 
+  "https://arims-client.vercel.app",
   process.env.NEXT_PUBLIC_APP_URL,
   process.env.FRONTEND_URL,
 ];
