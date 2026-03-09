@@ -8,8 +8,8 @@ import nodemailer from "nodemailer";
 import crypto from "crypto";
 import bodyParser from "body-parser";
 import multer from "multer";
-import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import Groq from "groq-sdk";
+import PDF2Json from "pdf2json";
 
 // Multer Setup (file upload)
 const storage = multer.memoryStorage();
@@ -28,17 +28,13 @@ const upload = multer({
 // GROQ Setup
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-
-
-
-
 const app = express();
 const port = process.env.PORT || 5000;
 
 // Middleware 
 const allowedOrigins = [
   "http://localhost:3000",
-  "https://your-vercel-url.vercel.app", // add this after deploying to Vercel
+  "https://arims-bice.vercel.app/", 
   process.env.NEXT_PUBLIC_APP_URL,
   process.env.FRONTEND_URL,
 ];
@@ -849,16 +845,17 @@ app.post("/api/resume/analyze", upload.single("resume"), async (req, res) => {
     }
 
 // Extract text from PDF
-const uint8Array = new Uint8Array(req.file.buffer)
-const pdfData = await getDocument({ data: uint8Array }).promise;
-let resumeText = "";
-
-for (let i = 1; i <= pdfData.numPages; i++) {
-  const page = await pdfData.getPage(i);
-  const content = await page.getTextContent();
-  const pageText = content.items.map((item) => item.str).join(" ");
-  resumeText += pageText + "\n";
-}
+const pdfParser = new PDF2Json();
+const resumeText = await new Promise((resolve, reject) => {
+  pdfParser.on("pdfParser_dataReady", (data) => {
+    const text = data.Pages.map(page =>
+      page.Texts.map(t => decodeURIComponent(t.R[0].T)).join(" ")
+    ).join("\n");
+    resolve(text);
+  });
+  pdfParser.on("pdfParser_dataError", reject);
+  pdfParser.parseBuffer(req.file.buffer);
+});
 
 if (!resumeText || resumeText.trim().length === 0) {
   return res.status(400).json({ error: "Could not extract text from PDF. Make sure it is not a scanned image." });
