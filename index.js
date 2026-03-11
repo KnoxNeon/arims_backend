@@ -548,6 +548,22 @@ app.post("/api/resume-builder/generate", (req, res) => {
     }
 });
 
+// _________________DASHBOARD____________________
+
+// GET ALL RESUMES FOR A USER
+app.get("/api/resumes/user/:userId", async (req, res) => {
+  try {
+    const resumes = await db.collection("resumes")
+      .find({ userId: req.params.userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.status(200).json(resumes);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong." });
+  }
+});
 
 
 // REGISTER
