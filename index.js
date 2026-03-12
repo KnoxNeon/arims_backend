@@ -37,7 +37,6 @@ const port = process.env.PORT || 5000;
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:5000",
-  "https://your-vercel-url.vercel.app", // add this after deploying to Vercel
   "https://arims-bice.vercel.app", 
   "https://arims-client.vercel.app",
   process.env.NEXT_PUBLIC_APP_URL,
@@ -936,6 +935,44 @@ app.get("/api/resumes/user/:userId", async (req, res) => {
   }
 });
 
+// USER PROFILE
+app.put("/api/users/:id", async (req, res) => {
+  try {
+    const {
+      name, phone, location, linkedIn, github, portfolio,
+      jobTitle, yearsOfExperience, industry,
+      workExperience, education, skills, certifications
+    } = req.body;
+
+    await db.collection("users").updateOne(
+      { _id: new ObjectId(req.params.id) },
+      {
+        $set: {
+          name,
+          phone:             phone || null,
+          location:          location || null,
+          linkedIn:          linkedIn || null,
+          github:            github || null,
+          portfolio:         portfolio || null,
+          jobTitle:          jobTitle || null,
+          yearsOfExperience: yearsOfExperience || null,
+          industry:          industry || null,
+          workExperience:    workExperience || [],
+          education:         education || [],
+          skills:            skills || [],
+          certifications:    certifications || [],
+          updatedAt:         new Date(),
+        },
+      }
+    );
+
+    res.status(200).json({ message: "Profile updated successfully." });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong." });
+  }
+});
+
 
 // REGISTER
 app.post("/api/auth/register", async (req, res) => {
@@ -1213,29 +1250,18 @@ app.post("/api/resume/analyze", upload.single("resume"), async (req, res) => {
       return res.status(400).json({ error: "Please upload a PDF file." });
     }
 
-    // Extract text from PDF
-    const uint8Array = new Uint8Array(req.file.buffer);
-    const pdfData = await getDocument({ data: uint8Array }).promise;
-    let resumeText = "";
-
-    for (let i = 1; i <= pdfData.numPages; i++) {
-      const page = await pdfData.getPage(i);
-      const content = await page.getTextContent();
-      const pageText = content.items.map((item) => item.str).join(" ");
-      resumeText += pageText + "\n";
-    }
 // Extract text from PDF
-const pdfParser = new PDF2Json();
-const resumeText = await new Promise((resolve, reject) => {
-  pdfParser.on("pdfParser_dataReady", (data) => {
-    const text = data.Pages.map(page =>
-      page.Texts.map(t => decodeURIComponent(t.R[0].T)).join(" ")
-    ).join("\n");
-    resolve(text);
-  });
-  pdfParser.on("pdfParser_dataError", reject);
-  pdfParser.parseBuffer(req.file.buffer);
-});
+   const pdfParser = new PDF2Json();
+   const resumeText = await new Promise((resolve, reject) => {
+     pdfParser.on("pdfParser_dataReady", (data) => {
+       const text = data.Pages.map(page =>
+         page.Texts.map(t => decodeURIComponent(t.R[0].T)).join(" ")
+       ).join("\n");
+       resolve(text);
+     });
+     pdfParser.on("pdfParser_dataError", reject);
+     pdfParser.parseBuffer(req.file.buffer);
+   });
 
     if (!resumeText || resumeText.trim().length === 0) {
       return res.status(400).json({ error: "Could not extract text from PDF. Make sure it is not a scanned image." });
