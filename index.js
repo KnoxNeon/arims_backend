@@ -37,7 +37,7 @@ const port = process.env.PORT || 5000;
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:5000",
-  "https://arims-bice.vercel.app", 
+  "https://arims-backend.vercel.app", 
   "https://arims-client.vercel.app",
   process.env.NEXT_PUBLIC_APP_URL,
   process.env.FRONTEND_URL,
@@ -77,7 +77,7 @@ async function connectDB() {
   try {
     await client.connect();
     await client.db("admin").command({ ping: 1 });
-    db = client.db(process.env.DB_NAME);
+    db = client.db("arims");
     console.log("✅ Connected to MongoDB Atlas");
   } catch (err) {
     console.error("❌ MongoDB connection error:", err);
@@ -1125,7 +1125,10 @@ app.get("/api/users/:id", async (req, res) => {
   try {
     const usersCollection = db.collection("users");
 
-    const user = await usersCollection.findOne({ _id: new ObjectId(req.params.id) }, { projection: { password: 0 } });
+    const user = await usersCollection.findOne(
+      { _id: new ObjectId(req.params.id) },
+      { projection: { password: 0 } }
+    );
 
     if (!user) return res.status(404).json({ error: "User not found." });
 
