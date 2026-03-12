@@ -8,8 +8,9 @@ import nodemailer from "nodemailer";
 import crypto from "crypto";
 import bodyParser from "body-parser";
 import multer from "multer";
-import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import Groq from "groq-sdk";
+import PDF2Json from "pdf2json";
+import PDFDocument from "pdfkit";
 
 // Multer Setup (file upload)
 const storage = multer.memoryStorage();
@@ -37,6 +38,8 @@ const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:5000",
   "https://your-vercel-url.vercel.app", // add this after deploying to Vercel
+  "https://arims-bice.vercel.app", 
+  "https://arims-client.vercel.app",
   process.env.NEXT_PUBLIC_APP_URL,
   process.env.FRONTEND_URL,
 ];
@@ -848,6 +851,92 @@ app.post("/api/mcq/submit/:id", async (req, res) => {
   }
 });
 
+// //  Resume Genarator //
+
+app.post("/api/resume-builder/generate", (req, res) => {
+    try {
+        const { personalInfo, summary, skills, experiences, projects, certifications } = req.body;
+
+        const doc = new PDFDocument({ margin: 50 });
+
+        res.setHeader("Content-Disposition", "attachment; filename=resume.pdf");
+        res.setHeader("Content-Type", "application/pdf");
+
+        doc.pipe(res);
+
+        // Resonal Info
+        doc.fontSize(24).fillColor("#111827").text(personalInfo.fullName || "Your Name", { align: "center" });
+        doc.fontSize(10).fillColor("#6B7280")
+            .text(`${personalInfo.email || ""} | ${personalInfo.phone || ""} | ${personalInfo.location || ""}`, { align: "center" });
+        doc.moveDown(1.5);
+
+        // PROFESSIONAL 
+        doc.fontSize(14).fillColor("#111827").text("PROFESSIONAL SUMMARY", { underline: true });
+        doc.moveDown(0.5);
+        doc.fontSize(11).fillColor("#374151").text(summary || "No summary provided.", { lineGap: 4 });
+        doc.moveDown();
+
+        // SKILLS 
+        doc.fontSize(14).fillColor("#111827").text("SKILLS", { underline: true });
+        doc.moveDown(0.5);
+        skills.split(",").map(s => s.trim()).filter(s => s).forEach(skill => doc.fontSize(11).text(`• ${skill}`));
+        doc.moveDown();
+
+        //  WORK EXPERIENCE 
+        doc.fontSize(14).fillColor("#111827").text("WORK EXPERIENCE", { underline: true });
+        doc.moveDown(0.5);
+        experiences.forEach(exp => {
+            if (!exp.company && !exp.role) return;
+            doc.fontSize(12).fillColor("#111827").text(`${exp.role || "Role"} — ${exp.company || "Company"}`);
+            doc.fontSize(10).fillColor("#6B7280").text(`(${exp.startDate || "Start"} - ${exp.endDate || "End"})`);
+            doc.fontSize(11).fillColor("#374151").text(exp.description || "No description provided.", { lineGap: 3 });
+            doc.moveDown();
+        });
+
+        //  PROJECTS 
+        doc.fontSize(14).fillColor("#111827").text("PROJECTS", { underline: true });
+        doc.moveDown(0.5);
+        projects.forEach(proj => {
+            if (!proj.name) return;
+            doc.fontSize(12).fillColor("#111827").text(proj.name);
+            if (proj.link) doc.fontSize(10).fillColor("#2563EB").text(proj.link);
+            doc.fontSize(11).fillColor("#374151").text(proj.description || "");
+            doc.moveDown();
+        });
+
+        // CERTIFICATIONS 
+        doc.fontSize(14).fillColor("#111827").text("CERTIFICATIONS", { underline: true });
+        doc.moveDown(0.5);
+        certifications.forEach(cert => {
+            if (!cert.name) return;
+            doc.fontSize(11).text(`• ${cert.name} — ${cert.org || ""} (${cert.date || ""})`);
+        });
+
+        doc.end();
+    } catch (err) {
+        console.error("PDF ERROR:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// _________________DASHBOARD____________________
+
+// GET ALL RESUMES FOR A USER
+app.get("/api/resumes/user/:userId", async (req, res) => {
+  try {
+    const resumes = await db.collection("resumes")
+      .find({ userId: req.params.userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.status(200).json(resumes);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong." });
+  }
+});
+
+
 // REGISTER
 app.post("/api/auth/register", async (req, res) => {
   try {
@@ -1135,6 +1224,18 @@ app.post("/api/resume/analyze", upload.single("resume"), async (req, res) => {
       const pageText = content.items.map((item) => item.str).join(" ");
       resumeText += pageText + "\n";
     }
+// Extract text from PDF
+const pdfParser = new PDF2Json();
+const resumeText = await new Promise((resolve, reject) => {
+  pdfParser.on("pdfParser_dataReady", (data) => {
+    const text = data.Pages.map(page =>
+      page.Texts.map(t => decodeURIComponent(t.R[0].T)).join(" ")
+    ).join("\n");
+    resolve(text);
+  });
+  pdfParser.on("pdfParser_dataError", reject);
+  pdfParser.parseBuffer(req.file.buffer);
+});
 
     if (!resumeText || resumeText.trim().length === 0) {
       return res.status(400).json({ error: "Could not extract text from PDF. Make sure it is not a scanned image." });
