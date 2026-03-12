@@ -35,7 +35,7 @@ const port = process.env.PORT || 5000;
 // Middleware 
 const allowedOrigins = [
   "http://localhost:3000",
-  "https://arims-bice.vercel.app", 
+  "https://arims-bice.vercel.app",
   "https://arims-client.vercel.app",
   process.env.NEXT_PUBLIC_APP_URL,
   process.env.FRONTEND_URL,
@@ -51,7 +51,7 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(bodyParser.json());   
+app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -73,7 +73,7 @@ async function connectDB() {
   try {
     await client.connect();
     await client.db("admin").command({ ping: 1 });
-    db = client.db("arims"); 
+    db = client.db("arims");
     console.log("✅ Connected to MongoDB Atlas");
   } catch (err) {
     console.error("❌ MongoDB connection error:", err);
@@ -480,73 +480,194 @@ app.post("/api/mcq/submit/:id", async (req, res) => {
   }
 });
 
+
+
 // //  Resume Genarator //
 
+
+
 app.post("/api/resume-builder/generate", (req, res) => {
-    try {
-        const { personalInfo, summary, skills, experiences, projects, certifications } = req.body;
+  try {
 
-        const doc = new PDFDocument({ margin: 50 });
+    const {
+      personalInfo = {},
+      summary = "",
+      skills = "",
+      experiences = [],
+      projects = [],
+      certifications = []
+    } = req.body;
 
-        res.setHeader("Content-Disposition", "attachment; filename=resume.pdf");
-        res.setHeader("Content-Type", "application/pdf");
+    const name = (personalInfo.fullName || "resume")
+      .replace(/\s+/g, "_")
+      .toLowerCase();
 
-        doc.pipe(res);
+    const fileName = `${name}_resume.pdf`;
 
-        // Resonal Info
-        doc.fontSize(24).fillColor("#111827").text(personalInfo.fullName || "Your Name", { align: "center" });
-        doc.fontSize(10).fillColor("#6B7280")
-            .text(`${personalInfo.email || ""} | ${personalInfo.phone || ""} | ${personalInfo.location || ""}`, { align: "center" });
-        doc.moveDown(1.5);
+    const doc = new PDFDocument({ margin: 50 });
 
-        // PROFESSIONAL 
-        doc.fontSize(14).fillColor("#111827").text("PROFESSIONAL SUMMARY", { underline: true });
-        doc.moveDown(0.5);
-        doc.fontSize(11).fillColor("#374151").text(summary || "No summary provided.", { lineGap: 4 });
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${fileName}"`
+    );
+
+    res.setHeader("Content-Type", "application/pdf");
+
+    doc.pipe(res);
+
+    // ===== HEADER =====
+
+    doc
+      .fontSize(24)
+      .fillColor("#111827")
+      .text(personalInfo.fullName || "Your Name", { align: "center" });
+
+    doc
+      .fontSize(10)
+      .fillColor("#6B7280")
+      .text(
+        `${personalInfo.email || ""} | ${personalInfo.phone || ""} | ${personalInfo.location || ""}`,
+        { align: "center" }
+      );
+
+    doc.moveDown(1.5);
+
+    // ===== SUMMARY =====
+
+    doc
+      .fontSize(14)
+      .fillColor("#111827")
+      .text("PROFESSIONAL SUMMARY", { underline: true });
+
+    doc.moveDown(0.5);
+
+    doc
+      .fontSize(11)
+      .fillColor("#374151")
+      .text(summary || "No summary provided.", { lineGap: 4 });
+
+    doc.moveDown();
+
+    // ===== SKILLS =====
+
+    doc
+      .fontSize(14)
+      .fillColor("#111827")
+      .text("SKILLS", { underline: true });
+
+    doc.moveDown(0.5);
+
+    (skills || "")
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean)
+      .forEach(skill => {
+        doc.fontSize(11).text(`• ${skill}`);
+      });
+
+    doc.moveDown();
+
+    // ===== EXPERIENCE =====
+
+    doc
+      .fontSize(14)
+      .fillColor("#111827")
+      .text("WORK EXPERIENCE", { underline: true });
+
+    doc.moveDown(0.5);
+
+    experiences.forEach(exp => {
+      if (!exp.company && !exp.role) return;
+
+      doc
+        .fontSize(12)
+        .fillColor("#111827")
+        .text(`${exp.role || "Role"} — ${exp.company || "Company"}`);
+
+      doc
+        .fontSize(10)
+        .fillColor("#6B7280")
+        .text(`(${exp.startDate || "Start"} - ${exp.endDate || "End"})`);
+
+      doc
+        .fontSize(11)
+        .fillColor("#374151")
+        .text(exp.description || "", { lineGap: 3 });
+
+      doc.moveDown();
+    });
+
+    // ===== PROJECTS =====
+
+    if (projects.length > 0) {
+
+      doc
+        .fontSize(14)
+        .fillColor("#111827")
+        .text("PROJECTS", { underline: true });
+
+      doc.moveDown(0.5);
+
+      projects.forEach(proj => {
+
+        if (!proj.name) return;
+
+        doc.fontSize(12).text(proj.name);
+
+        if (proj.link) {
+          doc
+            .fontSize(10)
+            .fillColor("#2563EB")
+            .text(proj.link);
+        }
+
+        doc
+          .fontSize(11)
+          .fillColor("#374151")
+          .text(proj.description || "");
+
         doc.moveDown();
+      });
 
-        // SKILLS 
-        doc.fontSize(14).fillColor("#111827").text("SKILLS", { underline: true });
-        doc.moveDown(0.5);
-        skills.split(",").map(s => s.trim()).filter(s => s).forEach(skill => doc.fontSize(11).text(`• ${skill}`));
-        doc.moveDown();
-
-        //  WORK EXPERIENCE 
-        doc.fontSize(14).fillColor("#111827").text("WORK EXPERIENCE", { underline: true });
-        doc.moveDown(0.5);
-        experiences.forEach(exp => {
-            if (!exp.company && !exp.role) return;
-            doc.fontSize(12).fillColor("#111827").text(`${exp.role || "Role"} — ${exp.company || "Company"}`);
-            doc.fontSize(10).fillColor("#6B7280").text(`(${exp.startDate || "Start"} - ${exp.endDate || "End"})`);
-            doc.fontSize(11).fillColor("#374151").text(exp.description || "No description provided.", { lineGap: 3 });
-            doc.moveDown();
-        });
-
-        //  PROJECTS 
-        doc.fontSize(14).fillColor("#111827").text("PROJECTS", { underline: true });
-        doc.moveDown(0.5);
-        projects.forEach(proj => {
-            if (!proj.name) return;
-            doc.fontSize(12).fillColor("#111827").text(proj.name);
-            if (proj.link) doc.fontSize(10).fillColor("#2563EB").text(proj.link);
-            doc.fontSize(11).fillColor("#374151").text(proj.description || "");
-            doc.moveDown();
-        });
-
-        // CERTIFICATIONS 
-        doc.fontSize(14).fillColor("#111827").text("CERTIFICATIONS", { underline: true });
-        doc.moveDown(0.5);
-        certifications.forEach(cert => {
-            if (!cert.name) return;
-            doc.fontSize(11).text(`• ${cert.name} — ${cert.org || ""} (${cert.date || ""})`);
-        });
-
-        doc.end();
-    } catch (err) {
-        console.error("PDF ERROR:", err);
-        res.status(500).json({ success: false, error: err.message });
     }
+
+    // ===== CERTIFICATIONS =====
+
+    if (certifications.length > 0) {
+
+      doc
+        .fontSize(14)
+        .fillColor("#111827")
+        .text("CERTIFICATIONS", { underline: true });
+
+      doc.moveDown(0.5);
+
+      certifications.forEach(cert => {
+
+        if (!cert.name) return;
+
+        doc
+          .fontSize(11)
+          .fillColor("#374151")
+          .text(`• ${cert.name} — ${cert.org || ""} (${cert.date || ""})`);
+      });
+
+    }
+
+    doc.end();
+
+  } catch (err) {
+
+    console.error("PDF ERROR:", err);
+
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+
+  }
 });
+
 
 
 
@@ -644,14 +765,14 @@ app.post("/api/auth/login", async (req, res) => {
     await usersCollection.updateOne(
       { email },
       {
-        $set:   { failedLoginAttempts: 0, updatedAt: new Date() },
-        $unset: { lockUntil: "" }, 
+        $set: { failedLoginAttempts: 0, updatedAt: new Date() },
+        $unset: { lockUntil: "" },
       }
     );
 
     res.status(200).json({
-      id:    user._id.toString(),
-      name:  user.name,
+      id: user._id.toString(),
+      name: user.name,
       email: user.email,
     });
   } catch (err) {
@@ -679,8 +800,8 @@ app.post("/api/auth/google", async (req, res) => {
       );
 
       return res.status(200).json({
-        id:    user._id.toString(),
-        name:  user.name,
+        id: user._id.toString(),
+        name: user.name,
         email: user.email,
         image: user.image,
       });
@@ -691,12 +812,12 @@ app.post("/api/auth/google", async (req, res) => {
       email,
       googleId,
       image,
-      password:  null,
+      password: null,
       createdAt: new Date(),
     });
 
     res.status(201).json({
-      id:    result.insertedId.toString(),
+      id: result.insertedId.toString(),
       name,
       email,
       image,
@@ -826,7 +947,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
     await usersCollection.updateOne(
       { _id: user._id },
       {
-        $set:   { password: hashedPassword, updatedAt: new Date() },
+        $set: { password: hashedPassword, updatedAt: new Date() },
         $unset: { resetToken: "", resetTokenExpiry: "" }, // clean up token
       }
     );
@@ -846,30 +967,30 @@ app.post("/api/resume/analyze", upload.single("resume"), async (req, res) => {
       return res.status(400).json({ error: "Please upload a PDF file." });
     }
 
-// Extract text from PDF
-const pdfParser = new PDF2Json();
-const resumeText = await new Promise((resolve, reject) => {
-  pdfParser.on("pdfParser_dataReady", (data) => {
-    const text = data.Pages.map(page =>
-      page.Texts.map(t => decodeURIComponent(t.R[0].T)).join(" ")
-    ).join("\n");
-    resolve(text);
-  });
-  pdfParser.on("pdfParser_dataError", reject);
-  pdfParser.parseBuffer(req.file.buffer);
-});
+    // Extract text from PDF
+    const pdfParser = new PDF2Json();
+    const resumeText = await new Promise((resolve, reject) => {
+      pdfParser.on("pdfParser_dataReady", (data) => {
+        const text = data.Pages.map(page =>
+          page.Texts.map(t => decodeURIComponent(t.R[0].T)).join(" ")
+        ).join("\n");
+        resolve(text);
+      });
+      pdfParser.on("pdfParser_dataError", reject);
+      pdfParser.parseBuffer(req.file.buffer);
+    });
 
-if (!resumeText || resumeText.trim().length === 0) {
-  return res.status(400).json({ error: "Could not extract text from PDF. Make sure it is not a scanned image." });
-}
+    if (!resumeText || resumeText.trim().length === 0) {
+      return res.status(400).json({ error: "Could not extract text from PDF. Make sure it is not a scanned image." });
+    }
 
-// Send to Groq
-const completion = await groq.chat.completions.create({
-  model: "llama-3.3-70b-versatile", // free and very capable
-  messages: [
-    {
-      role: "system",
-      content: `You are an expert ATS (Applicant Tracking System) resume analyzer. 
+    // Send to Groq
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile", // free and very capable
+      messages: [
+        {
+          role: "system",
+          content: `You are an expert ATS (Applicant Tracking System) resume analyzer. 
       Analyze the resume and return a JSON response with exactly this structure:
       {
         "atsScore": <number between 0-100>,
@@ -887,24 +1008,24 @@ const completion = await groq.chat.completions.create({
         "summary": "<2-3 sentence overall summary>"
       }
       Return ONLY the JSON object, no extra text, no markdown backticks.`,
-    },
-    {
-      role: "user",
-      content: `Analyze this resume:\n\n${resumeText}`,
-    },
-  ],
-  temperature: 0.3,
-});
+        },
+        {
+          role: "user",
+          content: `Analyze this resume:\n\n${resumeText}`,
+        },
+      ],
+      temperature: 0.3,
+    });
 
-// Parse Groq response
-const rawResponse = completion.choices[0].message.content;
-const analysis = JSON.parse(rawResponse);
+    // Parse Groq response
+    const rawResponse = completion.choices[0].message.content;
+    const analysis = JSON.parse(rawResponse);
 
     // Save to MongoDB
     const resumesCollection = db.collection("resumes");
     await resumesCollection.insertOne({
-      userId:    req.body.userId || null,
-      fileName:  req.file.originalname,
+      userId: req.body.userId || null,
+      fileName: req.file.originalname,
       analysis,
       createdAt: new Date(),
     });
