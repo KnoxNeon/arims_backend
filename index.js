@@ -25,7 +25,6 @@ const upload = multer({
   },
 });
 
-
 // GROQ Setup
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -33,26 +32,15 @@ const app = express();
 const port = process.env.PORT || 5000;
 
 // Middleware
-const allowedOrigins = [
-  "http://localhost:3000",
-  "http://localhost:5000",
-  "https://your-vercel-url.vercel.app", // add this after deploying to Vercel
-  process.env.NEXT_PUBLIC_APP_URL,
-  process.env.FRONTEND_URL,
-];
+const allowedOrigins = ["http://localhost:3000","http://localhost:5000", process.env.NEXT_PUBLIC_APP_URL, process.env.NEXT_PUBLIC_BACKEND_URL];
 
 app.use(
   cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
+    origin: allowedOrigins,
     credentials: true,
   }),
 );
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.json());
@@ -92,11 +80,17 @@ app.get("/api/test", (req, res) => {
   res.status(200).json({ status: "🚀 Server is running" });
 });
 
+/****************************
+ * AI Interview Session apis
+ ****************************/
+
 // start session
-app.post("/api/interview/ai/session/start", async (req, res) => {
+app.post("/api/interview/aiSession/start", async (req, res) => {
   try {
-    const { field, sector, role, difficulty, focusTopics, totalQuestions } = req.body;
+    const { sector, role, difficulty, focusTopics, totalQuestions, userEmail } = req.body;
     const session = {
+      userEmail,
+      interviewType: "speeking",
       config: {
         sector,
         role,
@@ -107,12 +101,13 @@ app.post("/api/interview/ai/session/start", async (req, res) => {
       questions: null,
       answers: [],
       currentQuestionIndex: -1,
-      timeRemainingForCurrentQuestion:3,
+      timeRemainingForCurrentQuestion: 3,
       overallScore: 0,
       analytics: null,
       createdAt: new Date(),
       endedAt: null,
       completed: false,
+      status:"ongoing"
     };
 
     const prompt = `
@@ -183,7 +178,7 @@ app.post("/api/interview/ai/session/start", async (req, res) => {
 });
 
 //  Get Session by ID
-app.get("/api/interview/ai/session/:sessionId", async (req, res) => {
+app.get("/api/interview/aiSession/:sessionId", async (req, res) => {
   try {
     const session = await db.collection("aiSessions").findOne({ _id: new ObjectId(req.params.sessionId) });
 
@@ -194,22 +189,23 @@ app.get("/api/interview/ai/session/:sessionId", async (req, res) => {
     res.status(500).json({ error: "Invalid session ID" });
   }
 });
-app.patch("/api/interview/ai/session/:sessionId", async (req, res) => {
-  const {currentQuestionIndex}=req.body
+app.patch("/api/interview/aiSession/:sessionId", async (req, res) => {
+  const { currentQuestionIndex } = req.body;
   const update = {
-    $set:{
-      currentQuestionIndex
-    }
-  }
-  const result = await db.collection("aiSessions").updateOne({ _id: new ObjectId(req.params.sessionId)},update)
- console.log("update: ",result);
-  res.json({questionIndex:currentQuestionIndex})
+    $set: {
+      currentQuestionIndex,
+    },
+  };
+  const result = await db.collection("aiSessions").updateOne({ _id: new ObjectId(req.params.sessionId) }, update);
+  console.log("update: ", result);
+  res.json({ questionIndex: currentQuestionIndex });
 });
 
 // making question
-app.post("/api/interview/ai/question", async (req, res) => {
+app.post("/api/interview/aiSession/question", async (req, res) => {
   console.log(req.body);
   const { role, sessionId, sector, difficulty, focusTopics, totalQuestions } = req.body;
+
 
   const prompt = `
   Your are a professional technical einterviewer.
@@ -285,7 +281,7 @@ app.post("/api/interview/ai/question", async (req, res) => {
   });
 });
 // NEXT QUESTION / SUBMIT ANSWER / Evaluation
-app.post("/api/interview/ai/answer", async (req, res) => {
+app.post("/api/interview/aiSession/answer", async (req, res) => {
   try {
     const { sessionId, answer } = req.body;
     const interview = await db.collection("aiSessions").findOne({ _id: new ObjectId(sessionId) });
@@ -466,12 +462,164 @@ app.post("/api/interview/ai/answer", async (req, res) => {
   }
 });
 
+// Helper: Question Validation
+function validateQuestion(data) {
+  console.log(data);
+  if (!data.role) return "Role is required";
+  // if (!data.industry) return "Industry is required";
+  if (!data.difficulty) return "Difficulty is required";
+  if (!data.topic) return "Topic is required";
+  if (!data.questionType) return "Question type is required";
+  if (!data.questionText) return "Question text is required";
+  if (!data.marks || typeof data.marks !== "number") return "Marks must be a number";
+
+  if (data.questionType === "MCQ") {
+    if (!Array.isArray(data.options) || data.options.length < 2) return "MCQ must have at least 2 options";
+
+    if (!data.options.includes(data.correctAnswer)) return "Correct answer must match one of the options";
+  }
+
+  return null;
+}
+
+/****************************
+ * Quiz-AI Interview Session apis
+ ****************************/
+
+// MCQ Interview Start API
+app.post("/api/interview/quizSession/start", async (req, res) => {
+  try {
+    console.log(req.body);
+    const { role, difficulty, questionCount, duration, userEmail } = req.body;
+
+    if (!role || !difficulty) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    console.log("req: ", role, difficulty);
+    const questions = await db
+      .collection("questions")
+      .aggregate([{ $match: { role, difficulty } }, { $sample: { size: parseInt(questionCount) } }])
+      .toArray();
+    console.log("\n ques: ", questions);
+    if (!questions.length) {
+      return res.status(404).json({ error: "No questions found" });
+    }
+
+    const session = {
+      userEmail,
+      role,
+      difficulty,
+      duration: parseInt(duration),
+      interviewType: "mcq",
+      questions: questions.map((q) => ({
+        questionId: q._id,
+        questionText: q.questionText,
+        explanation: q.explanation,
+        topic: q.topic,
+        options: q.options,
+        correctAnswer: q.correctAnswer, // keep for evaluation
+        marks: q.marks,
+        selectedOption: null,
+        isCorrect: null,
+      })),
+      topicStats: null,
+      totalScore: 0,
+      maxScore: questions.reduce((sum, q) => sum + q.marks, 0),
+      status: "ongoing",
+      startedAt: new Date(),
+      completedAt: null,
+    };
+
+    const result = await db.collection("mcqSessions").insertOne(session);
+    console.log("\nsession: ", result);
+    res.json({ sessionId: result.insertedId });
+  } catch (err) {
+    console.error("MCQ Start Error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+//  Get Session by ID
+app.get("/api/interview/history", async (req, res) => {
+  const email = req.query.email;
+  console.log("email: ", email);
+  const query = {};
+  if (email) {
+    query.userEmail = email;
+  }
+  try {
+    const mcqSessions = await db.collection("mcqSessions").find(query).toArray();
+    const aiSessions = await db.collection("aiSessions").find(query).toArray();
+    const sessions = [...mcqSessions, ...aiSessions];
+    if (!sessions) return res.status(404).json({ error: "Session not found" });
+    console.log(sessions);
+    res.json({ sessions });
+  } catch (err) {
+    res.status(500).json({ error: "Invalid session ID" });
+  }
+});
+app.get("/api/interview/quizSession/:id", async (req, res) => {
+  try {
+    const session = await db.collection("mcqSessions").findOne({ _id: new ObjectId(req.params.id) });
+
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    res.json(session);
+  } catch (err) {
+    res.status(500).json({ error: "Invalid session ID" });
+  }
+});
+
+// Submit Interview
+app.post("/api/interview/quizSession/answer", async (req, res) => {
+  try {
+    const { id, answers } = req.body;
+    const session = await db.collection("mcqSessions").findOne({ _id: new ObjectId(id) });
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    let totalScore = 0,
+      updatedQuestions = [];
+    const topicStats = {};
+
+    session.questions.forEach((q) => {
+      q.selectedOption = answers[q.questionId];
+      if (!topicStats[q.topic]) {
+        topicStats[q.topic] = { correct: 0, total: 0 };
+      }
+      topicStats[q.topic].total++;
+
+      if (answers[q.questionId] === q.correctAnswer) {
+        totalScore += 5;
+        q.isCorrect = true;
+        topicStats[q.topic].correct++;
+      } else q.isCorrect = false;
+      updatedQuestions.push(q);
+    });
+    const result = await db.collection("mcqSessions").updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          totalScore,
+          questions: updatedQuestions,
+          topicStats,
+          status: "completed",
+          completedAt: new Date(),
+        },
+      },
+    );
+
+    res.json({ totalScore });
+  } catch (err) {
+    res.status(500).json({ error: "Submission failed" });
+  }
+});
+
 /**
  * AI Explanation / Feedback Endpoint
  * Accepts: questionTopic, questionText, correctAnswer, userAnswer
  * Responds with: aiExplanation
  */
-app.post("/api/ai/explain", async (req, res) => {
+app.post("/api/quiz/ai/explain", async (req, res) => {
   try {
     const { questionTopic, questionText, correctAnswer, userAnswer } = req.body;
 
@@ -531,25 +679,13 @@ Do not include any other text.
   }
 });
 
-// Helper: Question Validation
-function validateQuestion(data) {
-  console.log(data);
-  if (!data.role) return "Role is required";
-  // if (!data.industry) return "Industry is required";
-  if (!data.difficulty) return "Difficulty is required";
-  if (!data.topic) return "Topic is required";
-  if (!data.questionType) return "Question type is required";
-  if (!data.questionText) return "Question text is required";
-  if (!data.marks || typeof data.marks !== "number") return "Marks must be a number";
+/****************************
+ * interview history
+ ****************************/
 
-  if (data.questionType === "MCQ") {
-    if (!Array.isArray(data.options) || data.options.length < 2) return "MCQ must have at least 2 options";
-
-    if (!data.options.includes(data.correctAnswer)) return "Correct answer must match one of the options";
-  }
-
-  return null;
-}
+/****************************
+ * Quiz questions setup apis
+ ****************************/
 
 //   Create Question
 app.post("/api/admin/questions", async (req, res) => {
@@ -636,25 +772,23 @@ app.put("/api/admin/questions/:id", async (req, res) => {
 
     const updatedData = {
       $set: {
-          role: req.body.role,
-          industry: req.body.industry,
-          difficulty: req.body.difficulty,
-          topic: req.body.topic,
-          questionType: req.body.questionType,
-          questionText: req.body.questionText,
-          options: req.body.options || [],
-          correctAnswer: req.body.correctAnswer || null,
-          marks: req.body.marks,
-          explanation: req.body.explanation || "",
-          tags: req.body.tags || [],
-          status: req.body.status || "active",
-          updatedAt: new Date(),
-        },
+        role: req.body.role,
+        industry: req.body.industry,
+        difficulty: req.body.difficulty,
+        topic: req.body.topic,
+        questionType: req.body.questionType,
+        questionText: req.body.questionText,
+        options: req.body.options || [],
+        correctAnswer: req.body.correctAnswer || null,
+        marks: req.body.marks,
+        explanation: req.body.explanation || "",
+        tags: req.body.tags || [],
+        status: req.body.status || "active",
+        updatedAt: new Date(),
+      },
     };
 
-    const result = await db.collection("questions").updateOne(
-      { _id: new ObjectId(req.params.id) },updatedData,
-    );
+    const result = await db.collection("questions").updateOne({ _id: new ObjectId(req.params.id) }, updatedData);
 
     res.json({ message: "Question updated successfully" });
   } catch (err) {
@@ -740,113 +874,9 @@ app.post("/api/admin/questions/bulk", async (req, res) => {
   }
 });
 
-// MCQ Interview Start API
-app.post("/api/mcq/start", async (req, res) => {
-  try {
-    const { role, difficulty, questionCount, duration } = req.body;
-
-    if (!role || !difficulty) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-    console.log("req: ", role, difficulty);
-    const questions = await db
-      .collection("questions")
-      .aggregate([{ $match: { role, difficulty } }, { $sample: { size: parseInt(questionCount) } }])
-      .toArray();
-    console.log("\n ques: ", questions);
-    if (!questions.length) {
-      return res.status(404).json({ error: "No questions found" });
-    }
-
-    const session = {
-      role,
-      difficulty,
-      duration: parseInt(duration),
-      questions: questions.map((q) => ({
-        questionId: q._id,
-        questionText: q.questionText,
-        explanation: q.explanation,
-        topic: q.topic,
-        options: q.options,
-        correctAnswer: q.correctAnswer, // keep for evaluation
-        marks: q.marks,
-        selectedOption: null,
-        isCorrect: null,
-      })),
-      topicStats: null,
-      totalScore: 0,
-      maxScore: questions.reduce((sum, q) => sum + q.marks, 0),
-      status: "ongoing",
-      startedAt: new Date(),
-      completedAt: null,
-    };
-
-    const result = await db.collection("mcqSessions").insertOne(session);
-    console.log("\nsession: ", result);
-    res.json({ sessionId: result.insertedId });
-  } catch (err) {
-    console.error("MCQ Start Error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-//  Get Session by ID
-app.get("/api/mcq/session/:id", async (req, res) => {
-  try {
-    const session = await db.collection("mcqSessions").findOne({ _id: new ObjectId(req.params.id) });
-
-    if (!session) return res.status(404).json({ error: "Session not found" });
-
-    res.json(session);
-  } catch (err) {
-    res.status(500).json({ error: "Invalid session ID" });
-  }
-});
-
-// Submit Interview
-app.post("/api/mcq/submit/:id", async (req, res) => {
-  try {
-    const { answers } = req.body;
-    const session = await db.collection("mcqSessions").findOne({ _id: new ObjectId(req.params.id) });
-    if (!session) return res.status(404).json({ error: "Session not found" });
-
-    let totalScore = 0,
-      updatedQuestions = [];
-    const topicStats = {};
-
-    session.questions.forEach((q) => {
-      q.selectedOption = answers[q.questionId];
-      if (!topicStats[q.topic]) {
-        topicStats[q.topic] = { correct: 0, total: 0 };
-      }
-      topicStats[q.topic].total++;
-
-      if (answers[q.questionId] === q.correctAnswer) {
-        totalScore += 5;
-        q.isCorrect = true;
-        topicStats[q.topic].correct++;
-      } else q.isCorrect = false;
-      updatedQuestions.push(q);
-    });
-    console.log("updated questions: ", updatedQuestions);
-    const accuracy = await db.collection("mcqSessions").updateOne(
-      { _id: new ObjectId(req.params.id) },
-      {
-        $set: {
-          totalScore,
-          questions: updatedQuestions,
-          topicStats,
-          status: "completed",
-          completedAt: new Date(),
-        },
-      },
-    );
-
-    res.json({ totalScore });
-  } catch (err) {
-    res.status(500).json({ error: "Submission failed" });
-  }
-});
+/****************************
+ * auth related apis
+ ****************************/
 
 // REGISTER
 app.post("/api/auth/register", async (req, res) => {
