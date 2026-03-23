@@ -1266,6 +1266,9 @@ app.post("/api/resume/analyze", upload.single("resume"), async (req, res) => {
      pdfParser.parseBuffer(req.file.buffer);
    });
 
+app.listen(port, () => {
+    console.log(`Server running on ${port}`)
+})
     if (!resumeText || resumeText.trim().length === 0) {
       return res.status(400).json({ error: "Could not extract text from PDF. Make sure it is not a scanned image." });
     }
