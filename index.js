@@ -32,25 +32,16 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Middleware 
-const allowedOrigins = [
-  "http://localhost:3000",
-  "https://arims-bice.vercel.app",
-  "https://arims-client.vercel.app",
-  process.env.NEXT_PUBLIC_APP_URL,
-  process.env.FRONTEND_URL,
-];
+// Middleware
+const allowedOrigins = ["http://localhost:3000","http://localhost:5000", process.env.NEXT_PUBLIC_APP_URL, process.env.NEXT_PUBLIC_BACKEND_URL];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: allowedOrigins,
+    credentials: true,
+  }),
+);
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.json());
@@ -81,7 +72,7 @@ async function connectDB() {
   }
 }
 
-// Routes 
+// Routes
 app.get("/", (req, res) => {
   res.send("Hello from ARIMS backend");
 });
@@ -90,14 +81,546 @@ app.get("/api/test", (req, res) => {
   res.status(200).json({ status: "🚀 Server is running" });
 });
 
+/****************************
+ * AI Interview Session apis
+ ****************************/
 
+// start session
+app.post("/api/interview/aiSession/start", async (req, res) => {
+  try {
+    const { sector, role, difficulty, focusTopics, totalQuestions, userEmail } = req.body;
+    const session = {
+      userEmail,
+      interviewType: "speeking",
+      config: {
+        sector,
+        role,
+        difficulty,
+        focusTopics,
+        totalQuestions,
+      },
+      questions: null,
+      answers: [],
+      currentQuestionIndex: -1,
+      timeRemainingForCurrentQuestion: 3,
+      overallScore: 0,
+      analytics: null,
+      createdAt: new Date(),
+      endedAt: null,
+      completed: false,
+      status:"ongoing"
+    };
+
+    const prompt = `
+  Your are a professional technical einterviewer.
+  Generate ${totalQuestions} unique technical interview question (concisely/to the point/2marks) for a candidate:
+  Sector: ${sector}
+  Role: ${role}
+  Difficulty: ${difficulty}
+  Focus Topics: ${focusTopics.join ? focusTopics.join(", ") : focusTopics}
+
+  Rules: 
+  - Questions must be unique
+  - Avoid repeating topics
+  - Ask realistic industry interview questions
+
+  return json array format
+  [
+  {
+      "questionText": "...",
+      "topic": "...",
+  }
+  {
+      "questionText": "...",
+      "topic": "...",
+  }
+]
+  Doesn't add any other text before or after array, just give the json array directly even without .
+  `;
+
+    let aiResult;
+
+    try {
+      const completion = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile", //free and very capable
+        messages: [
+          { role: "system", content: "You are a strict technical interviewer." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.3,
+      });
+
+      aiResult = completion.choices[0].message.content;
+    } catch (err) {
+      console.error("AI Error:", err);
+      return res.status(500).json({ error: "AI evaluation failed" });
+    }
+
+    // Parse AI JSON safely
+    let parsedQuestions;
+    console.log("ai result: ", aiResult);
+
+    console.log(aiResult);
+    try {
+      parsedQuestions = JSON.parse(aiResult);
+    } catch (e) {
+      console.log("error parsing:", e.message);
+      return res.status(500).json({ error: "Invalid AI response format", raw: aiResult });
+    }
+
+    session.questions = parsedQuestions;
+
+    const result = await db.collection("aiSessions").insertOne(session);
+    res.json({ sessionId: result.insertedId });
+  } catch (err) {
+    console.error("AI Interview Start Error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+//  Get Session by ID
+app.get("/api/interview/aiSession/:sessionId", async (req, res) => {
+  try {
+    const session = await db.collection("aiSessions").findOne({ _id: new ObjectId(req.params.sessionId) });
+
+    if (!session) return res.status(404).json({ error: "Session not found" });
+    console.log("session: ", session);
+    res.json(session);
+  } catch (err) {
+    res.status(500).json({ error: "Invalid session ID" });
+  }
+});
+app.patch("/api/interview/aiSession/:sessionId", async (req, res) => {
+  const { currentQuestionIndex } = req.body;
+  const update = {
+    $set: {
+      currentQuestionIndex,
+    },
+  };
+  const result = await db.collection("aiSessions").updateOne({ _id: new ObjectId(req.params.sessionId) }, update);
+  console.log("update: ", result);
+  res.json({ questionIndex: currentQuestionIndex });
+});
+
+// making question
+app.post("/api/interview/aiSession/question", async (req, res) => {
+  console.log(req.body);
+  const { role, sessionId, sector, difficulty, focusTopics, totalQuestions } = req.body;
+
+
+  const prompt = `
+  Your are a professional technical einterviewer.
+  Generate ${totalQuestions} unique technical interview question (concisely/to the point/2marks) for a candidate:
+  Sector: ${sector}
+  Role: ${role}
+  Difficulty: ${difficulty}
+  Focus Topics: ${focusTopics.join ? focusTopics.join(", ") : focusTopics}
+
+  Rules: 
+  - Questions must be unique
+  - Avoid repeating topics
+  - Ask realistic industry interview questions
+
+  return json array format
+  [
+  {
+      "questionText": "...",
+      "topic": "...",
+  }
+  {
+      "questionText": "...",
+      "topic": "...",
+  }
+]
+  Doesn't add any other text before or after array, just give the json array directly even without .
+  `;
+
+  let aiResult;
+
+  try {
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile", //free and very capable
+      messages: [
+        { role: "system", content: "You are a strict technical interviewer." },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.3,
+    });
+
+    aiResult = completion.choices[0].message.content;
+  } catch (err) {
+    console.error("AI Error:", err);
+    return res.status(500).json({ error: "AI evaluation failed" });
+  }
+
+  // Parse AI JSON safely
+  let parsed;
+  console.log("ai result: ", aiResult);
+
+  console.log(aiResult);
+  try {
+    parsed = JSON.parse(aiResult);
+  } catch (e) {
+    console.log("error parsing:", e.message);
+    return res.status(500).json({ error: "Invalid AI response format", raw: aiResult });
+  }
+  console.log("parsed: ", parsed);
+  const currentSession = await db.collection("aiSessions").findOne({ _id: new ObjectId(sessionId) });
+  currentSession.questions = parsed;
+  currentSession.status = true;
+  const update = {
+    $set: {
+      ...currentSession,
+    },
+  };
+  const result = await db.collection("aiSessions").updateOne({ _id: new ObjectId(sessionId) }, update);
+
+  res.json({
+    sessionId,
+    questions: parsed,
+    timePerQuestion: 150,
+  });
+});
+// NEXT QUESTION / SUBMIT ANSWER / Evaluation
+app.post("/api/interview/aiSession/answer", async (req, res) => {
+  try {
+    const { sessionId, answer } = req.body;
+    const interview = await db.collection("aiSessions").findOne({ _id: new ObjectId(sessionId) });
+    if (!interview || interview.completed) return res.status(400).json({ error: "Invalid session" });
+
+    const question = interview.questions[interview.currentQuestionIndex];
+    console.log(question.questionText, answer);
+    const now = Date.now();
+    const timeSpent = (now - interview.questionStartedAt) / 1000;
+
+    if (timeSpent > interview.timePerQuestion) {
+      return res.json({
+        timeout: true,
+        message: "Time exceeded for this question.",
+      });
+    }
+
+    // AI Evaluation (Q-by-Q)
+    let lastEvaluation = null;
+    if (answer) {
+      try {
+        const prompt = `
+        You are a strict technical interviewer.
+        Evaluate the candidate answer based on:
+
+        Topic: ${question.topic}
+        Question: ${question.questionText}
+        Answer: ${answer}
+
+        Provide JSON with keys:
+        technical (0-10), clarity (0-10), depth (0-10), feedback, idealAnswer, improvementTips
+        `;
+
+        const completion = await groq.chat.completions.create({
+          model: "llama-3.3-70b-versatile", //free and very capable
+          messages: [
+            { role: "system", content: "You are a strict technical interviewer. Return ONLY valid JSON." },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.3,
+        });
+
+        let evalContent = completion.choices[0].message.content.trim();
+        // Clean up markdown if present
+        if (evalContent.startsWith("```json")) {
+          evalContent = evalContent.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+        } else if (evalContent.startsWith("```")) {
+          evalContent = evalContent.replace(/^```\s*/, "").replace(/\s*```$/, "");
+        }
+        lastEvaluation = JSON.parse(evalContent);
+
+        const scoreSum = lastEvaluation.technical + lastEvaluation.clarity + lastEvaluation.depth;
+        interview.answers.push({
+          question: question.questionText,
+          answer,
+          evaluation: lastEvaluation,
+          score: scoreSum,
+        });
+        interview.overallScore += scoreSum;
+      } catch (err) {
+        console.error("AI eval error:", err);
+        // Continue without evaluation if AI fails
+        interview.answers.push({
+          question: question.questionText,
+          answer,
+          evaluation: {
+            technical: 5,
+            clarity: 5,
+            depth: 5,
+            feedback: "Evaluation failed",
+            idealAnswer: "",
+            improvementTips: "",
+          },
+          score: 15,
+        });
+        interview.overallScore += 15;
+      }
+    }
+    interview.currentQuestionIndex++;
+
+    // Check round completion
+
+    // Check session completion
+    if (interview.currentQuestionIndex >= interview.config.totalQuestions) {
+      interview.completed = true;
+      interview.status = "End";
+      interview.endedAt = new Date();
+
+      // Final Analytics intervie round object-r answer
+      const allAnswers = interview.answers;
+      console.log("allAnswers: ", allAnswers);
+      const avgTechnical = allAnswers.reduce((sum, a) => sum + a.evaluation.technical, 0) / allAnswers.length;
+      const avgClarity = allAnswers.reduce((sum, a) => sum + a.evaluation.clarity, 0) / allAnswers.length;
+      const avgDepth = allAnswers.reduce((sum, a) => sum + a.evaluation.depth, 0) / allAnswers.length;
+
+      const strengths = [];
+      const weaknesses = [];
+      if (avgTechnical >= 7) strengths.push("Technical Knowledge");
+      else if (avgTechnical < 5) weaknesses.push("Technical Knowledge");
+      if (avgClarity >= 7) strengths.push("Communication Clarity");
+      else if (avgClarity < 5) weaknesses.push("Communication Clarity");
+      if (avgDepth >= 7) strengths.push("Conceptual Depth");
+      else if (avgDepth < 5) weaknesses.push("Conceptual Depth");
+
+      let level = "Beginner";
+      const overallAvg = (avgTechnical + avgClarity + avgDepth) / 3;
+      if (overallAvg >= 8) level = "Advanced";
+      else if (overallAvg >= 6) level = "Intermediate";
+
+      // AI Recommendation
+      let recommendation = "Keep improving.";
+      try {
+        const prompt2 = `
+        Topic: ${question.topic}
+        Question: ${question.questionText}
+        Answer: ${answer}
+        Based on the following performance metrics:
+        Technical: ${avgTechnical.toFixed(1)}
+        Clarity: ${avgClarity.toFixed(1)}
+        Depth: ${avgDepth.toFixed(1)}
+        Overall Level: ${level}
+        Provide a short and concise professional career recommendation.
+        `;
+        const completion2 = await groq.chat.completions.create({
+          model: "llama-3.3-70b-versatile", //free and very capable
+          messages: [
+            { role: "system", content: "You are a senior career advisor." },
+            { role: "user", content: prompt2 },
+          ],
+          temperature: 0.5,
+        });
+        recommendation = completion2.choices[0].message.content;
+      } catch (err) {
+        console.error("Recommendation error", err);
+      }
+
+      // here can added the analytics to db , that is optional
+      interview.analytics = {
+        avgTechnical: avgTechnical.toFixed(1),
+        avgClarity: avgClarity.toFixed(1),
+        avgDepth: avgDepth.toFixed(1),
+        strengths,
+        weaknesses,
+        level,
+        recommendation,
+      };
+
+      const update = {
+        $set: {
+          ...interview,
+        },
+      };
+      const result = await db.collection("aiSessions").updateOne({ _id: new ObjectId(sessionId) }, update);
+
+      return res.json({
+        completed: true,
+        totalScore: interview.overallScore,
+        analytics: interview.analytics,
+      });
+    }
+
+    const update = {
+      $set: {
+        ...interview,
+      },
+    };
+    const result = await db.collection("aiSessions").updateOne({ _id: new ObjectId(sessionId) }, update);
+
+    res.json({
+      completed: false,
+      evaluation: lastEvaluation,
+      question: question.questionText,
+      answer: answer,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed next question" });
+  }
+});
+
+// Helper: Question Validation
+function validateQuestion(data) {
+  console.log(data);
+  if (!data.role) return "Role is required";
+  // if (!data.industry) return "Industry is required";
+  if (!data.difficulty) return "Difficulty is required";
+  if (!data.topic) return "Topic is required";
+  if (!data.questionType) return "Question type is required";
+  if (!data.questionText) return "Question text is required";
+  if (!data.marks || typeof data.marks !== "number") return "Marks must be a number";
+
+  if (data.questionType === "MCQ") {
+    if (!Array.isArray(data.options) || data.options.length < 2) return "MCQ must have at least 2 options";
+
+    if (!data.options.includes(data.correctAnswer)) return "Correct answer must match one of the options";
+  }
+
+  return null;
+}
+
+/****************************
+ * Quiz-AI Interview Session apis
+ ****************************/
+
+// MCQ Interview Start API
+app.post("/api/interview/quizSession/start", async (req, res) => {
+  try {
+    console.log(req.body);
+    const { role, difficulty, questionCount, duration, userEmail } = req.body;
+
+    if (!role || !difficulty) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    console.log("req: ", role, difficulty);
+    const questions = await db
+      .collection("questions")
+      .aggregate([{ $match: { role, difficulty } }, { $sample: { size: parseInt(questionCount) } }])
+      .toArray();
+    console.log("\n ques: ", questions);
+    if (!questions.length) {
+      return res.status(404).json({ error: "No questions found" });
+    }
+
+    const session = {
+      userEmail,
+      role,
+      difficulty,
+      duration: parseInt(duration),
+      interviewType: "mcq",
+      questions: questions.map((q) => ({
+        questionId: q._id,
+        questionText: q.questionText,
+        explanation: q.explanation,
+        topic: q.topic,
+        options: q.options,
+        correctAnswer: q.correctAnswer, // keep for evaluation
+        marks: q.marks,
+        selectedOption: null,
+        isCorrect: null,
+      })),
+      topicStats: null,
+      totalScore: 0,
+      maxScore: questions.reduce((sum, q) => sum + q.marks, 0),
+      status: "ongoing",
+      startedAt: new Date(),
+      completedAt: null,
+    };
+
+    const result = await db.collection("mcqSessions").insertOne(session);
+    console.log("\nsession: ", result);
+    res.json({ sessionId: result.insertedId });
+  } catch (err) {
+    console.error("MCQ Start Error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+//  Get Session by ID
+app.get("/api/interview/history", async (req, res) => {
+  const email = req.query.email;
+  console.log("email: ", email);
+  const query = {};
+  if (email) {
+    query.userEmail = email;
+  }
+  try {
+    const mcqSessions = await db.collection("mcqSessions").find(query).toArray();
+    const aiSessions = await db.collection("aiSessions").find(query).toArray();
+    const sessions = [...mcqSessions, ...aiSessions];
+    if (!sessions) return res.status(404).json({ error: "Session not found" });
+    console.log(sessions);
+    res.json({ sessions });
+  } catch (err) {
+    res.status(500).json({ error: "Invalid session ID" });
+  }
+});
+app.get("/api/interview/quizSession/:id", async (req, res) => {
+  try {
+    const session = await db.collection("mcqSessions").findOne({ _id: new ObjectId(req.params.id) });
+
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    res.json(session);
+  } catch (err) {
+    res.status(500).json({ error: "Invalid session ID" });
+  }
+});
+
+// Submit Interview
+app.post("/api/interview/quizSession/answer", async (req, res) => {
+  try {
+    const { id, answers } = req.body;
+    const session = await db.collection("mcqSessions").findOne({ _id: new ObjectId(id) });
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    let totalScore = 0,
+      updatedQuestions = [];
+    const topicStats = {};
+
+    session.questions.forEach((q) => {
+      q.selectedOption = answers[q.questionId];
+      if (!topicStats[q.topic]) {
+        topicStats[q.topic] = { correct: 0, total: 0 };
+      }
+      topicStats[q.topic].total++;
+
+      if (answers[q.questionId] === q.correctAnswer) {
+        totalScore += 5;
+        q.isCorrect = true;
+        topicStats[q.topic].correct++;
+      } else q.isCorrect = false;
+      updatedQuestions.push(q);
+    });
+    const result = await db.collection("mcqSessions").updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          totalScore,
+          questions: updatedQuestions,
+          topicStats,
+          status: "completed",
+          completedAt: new Date(),
+        },
+      },
+    );
+
+    res.json({ totalScore });
+  } catch (err) {
+    res.status(500).json({ error: "Submission failed" });
+  }
+});
 
 /**
  * AI Explanation / Feedback Endpoint
  * Accepts: questionTopic, questionText, correctAnswer, userAnswer
  * Responds with: aiExplanation
  */
-app.post("/api/ai/explain", async (req, res) => {
+app.post("/api/quiz/ai/explain", async (req, res) => {
   try {
     const { questionTopic, questionText, correctAnswer, userAnswer } = req.body;
 
@@ -157,25 +680,13 @@ Do not include any other text.
   }
 });
 
-// Helper: Question Validation
-function validateQuestion(data) {
-  console.log(data);
-  if (!data.role) return "Role is required";
-  // if (!data.industry) return "Industry is required";
-  if (!data.difficulty) return "Difficulty is required";
-  if (!data.topic) return "Topic is required";
-  if (!data.questionType) return "Question type is required";
-  if (!data.questionText) return "Question text is required";
-  if (!data.marks || typeof data.marks !== "number") return "Marks must be a number";
+/****************************
+ * interview history
+ ****************************/
 
-  if (data.questionType === "MCQ") {
-    if (!Array.isArray(data.options) || data.options.length < 2) return "MCQ must have at least 2 options";
-
-    if (!data.options.includes(data.correctAnswer)) return "Correct answer must match one of the options";
-  }
-
-  return null;
-}
+/****************************
+ * Quiz questions setup apis
+ ****************************/
 
 //   Create Question
 app.post("/api/admin/questions", async (req, res) => {
@@ -261,32 +772,24 @@ app.put("/api/admin/questions/:id", async (req, res) => {
     if (error) return res.status(400).json({ error });
 
     const updatedData = {
-      ...req.body,
-      updatedAt: new Date(),
-      $inc: { version: 1 },
+      $set: {
+        role: req.body.role,
+        industry: req.body.industry,
+        difficulty: req.body.difficulty,
+        topic: req.body.topic,
+        questionType: req.body.questionType,
+        questionText: req.body.questionText,
+        options: req.body.options || [],
+        correctAnswer: req.body.correctAnswer || null,
+        marks: req.body.marks,
+        explanation: req.body.explanation || "",
+        tags: req.body.tags || [],
+        status: req.body.status || "active",
+        updatedAt: new Date(),
+      },
     };
 
-    const result = await db.collection("questions").updateOne(
-      { _id: new ObjectId(req.params.id) },
-      {
-        $set: {
-          role: req.body.role,
-          industry: req.body.industry,
-          difficulty: req.body.difficulty,
-          topic: req.body.topic,
-          questionType: req.body.questionType,
-          questionText: req.body.questionText,
-          options: req.body.options || [],
-          correctAnswer: req.body.correctAnswer || null,
-          marks: req.body.marks,
-          explanation: req.body.explanation || "",
-          tags: req.body.tags || [],
-          status: req.body.status || "active",
-          updatedAt: new Date(),
-        },
-        $inc: { version: 1 },
-      },
-    );
+    const result = await db.collection("questions").updateOne({ _id: new ObjectId(req.params.id) }, updatedData);
 
     res.json({ message: "Question updated successfully" });
   } catch (err) {
@@ -372,113 +875,9 @@ app.post("/api/admin/questions/bulk", async (req, res) => {
   }
 });
 
-// MCQ Interview Start API
-app.post("/api/mcq/start", async (req, res) => {
-  try {
-    const { role, difficulty, questionCount, duration } = req.body;
-
-    if (!role || !difficulty) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-    console.log("req: ", role, difficulty);
-    const questions = await db
-      .collection("questions")
-      .aggregate([{ $match: { role, difficulty } }, { $sample: { size: parseInt(questionCount) } }])
-      .toArray();
-    console.log("\n ques: ", questions);
-    if (!questions.length) {
-      return res.status(404).json({ error: "No questions found" });
-    }
-
-    const session = {
-      role,
-      difficulty,
-      duration: parseInt(duration),
-      questions: questions.map((q) => ({
-        questionId: q._id,
-        questionText: q.questionText,
-        explanation: q.explanation,
-        topic: q.topic,
-        options: q.options,
-        correctAnswer: q.correctAnswer, // keep for evaluation
-        marks: q.marks,
-        selectedOption: null,
-        isCorrect: null,
-      })),
-      topicStats: null,
-      totalScore: 0,
-      maxScore: questions.reduce((sum, q) => sum + q.marks, 0),
-      status: "ongoing",
-      startedAt: new Date(),
-      completedAt: null,
-    };
-
-    const result = await db.collection("mcqSessions").insertOne(session);
-    console.log("\nsession: ", result);
-    res.json({ sessionId: result.insertedId });
-  } catch (err) {
-    console.error("MCQ Start Error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-//  Get Session by ID
-app.get("/api/mcq/session/:id", async (req, res) => {
-  try {
-    const session = await db.collection("mcqSessions").findOne({ _id: new ObjectId(req.params.id) });
-
-    if (!session) return res.status(404).json({ error: "Session not found" });
-
-    res.json(session);
-  } catch (err) {
-    res.status(500).json({ error: "Invalid session ID" });
-  }
-});
-
-// Submit Interview
-app.post("/api/mcq/submit/:id", async (req, res) => {
-  try {
-    const { answers } = req.body;
-    const session = await db.collection("mcqSessions").findOne({ _id: new ObjectId(req.params.id) });
-    if (!session) return res.status(404).json({ error: "Session not found" });
-
-    let totalScore = 0,
-      updatedQuestions = [];
-    const topicStats = {};
-
-    session.questions.forEach((q) => {
-      q.selectedOption = answers[q.questionId];
-      if (!topicStats[q.topic]) {
-        topicStats[q.topic] = { correct: 0, total: 0 };
-      }
-      topicStats[q.topic].total++;
-
-      if (answers[q.questionId] === q.correctAnswer) {
-        totalScore += 5;
-        q.isCorrect = true;
-        topicStats[q.topic].correct++;
-      } else q.isCorrect = false;
-      updatedQuestions.push(q);
-    });
-    console.log("updated questions: ", updatedQuestions);
-    const accuracy = await db.collection("mcqSessions").updateOne(
-      { _id: new ObjectId(req.params.id) },
-      {
-        $set: {
-          totalScore,
-          questions: updatedQuestions,
-          topicStats,
-          status: "completed",
-          completedAt: new Date(),
-        },
-      },
-    );
-
-    res.json({ totalScore });
-  } catch (err) {
-    res.status(500).json({ error: "Submission failed" });
-  }
-});
+/****************************
+ * auth related apis
+ ****************************/
 
 
 
@@ -668,6 +1067,60 @@ app.post("/api/resume-builder/generate", (req, res) => {
   }
 });
 
+// _________________DASHBOARD____________________
+
+// GET ALL RESUMES FOR A USER
+app.get("/api/resumes/user/:userId", async (req, res) => {
+  try {
+    const resumes = await db.collection("resumes")
+      .find({ userId: req.params.userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.status(200).json(resumes);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong." });
+  }
+});
+
+// USER PROFILE
+app.put("/api/users/:id", async (req, res) => {
+  try {
+    const {
+      name, phone, location, linkedIn, github, portfolio,
+      jobTitle, yearsOfExperience, industry,
+      workExperience, education, skills, certifications
+    } = req.body;
+
+    await db.collection("users").updateOne(
+      { _id: new ObjectId(req.params.id) },
+      {
+        $set: {
+          name,
+          phone:             phone || null,
+          location:          location || null,
+          linkedIn:          linkedIn || null,
+          github:            github || null,
+          portfolio:         portfolio || null,
+          jobTitle:          jobTitle || null,
+          yearsOfExperience: yearsOfExperience || null,
+          industry:          industry || null,
+          workExperience:    workExperience || [],
+          education:         education || [],
+          skills:            skills || [],
+          certifications:    certifications || [],
+          updatedAt:         new Date(),
+        },
+      }
+    );
+
+    res.status(200).json({ message: "Profile updated successfully." });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong." });
+  }
+});
 
 
 
@@ -676,14 +1129,12 @@ app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    if (!name || !email || !password)
-      return res.status(400).json({ error: "All fields are required." });
+    if (!name || !email || !password) return res.status(400).json({ error: "All fields are required." });
 
     const usersCollection = db.collection("users");
 
     const existingUser = await usersCollection.findOne({ email });
-    if (existingUser)
-      return res.status(409).json({ error: "User already exists." });
+    if (existingUser) return res.status(409).json({ error: "User already exists." });
 
     const hashedPassword = await bcrypt.hash(password, 12);
 
@@ -709,14 +1160,12 @@ app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    if (!email || !password)
-      return res.status(400).json({ error: "All fields are required." });
+    if (!email || !password) return res.status(400).json({ error: "All fields are required." });
 
     const usersCollection = db.collection("users");
 
     const user = await usersCollection.findOne({ email });
-    if (!user)
-      return res.status(404).json({ error: "No user found with this email." });
+    if (!user) return res.status(404).json({ error: "No user found with this email." });
 
     // Check if account is locked
     if (user.lockUntil && user.lockUntil > new Date()) {
@@ -726,7 +1175,7 @@ app.post("/api/auth/login", async (req, res) => {
       });
     }
 
-    // Validate password 
+    // Validate password
     const isValid = await bcrypt.compare(password, user.password);
 
     if (!isValid) {
@@ -742,7 +1191,7 @@ app.post("/api/auth/login", async (req, res) => {
               failedLoginAttempts: failedAttempts,
               lockUntil: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
             },
-          }
+          },
         );
         return res.status(403).json({
           error: "Account locked due to too many failed attempts. Try again in 15 minutes.",
@@ -750,10 +1199,7 @@ app.post("/api/auth/login", async (req, res) => {
       }
 
       // Not locked yet — increment failed attempts and warn user
-      await usersCollection.updateOne(
-        { email },
-        { $set: { failedLoginAttempts: failedAttempts } }
-      );
+      await usersCollection.updateOne({ email }, { $set: { failedLoginAttempts: failedAttempts } });
 
       const attemptsLeft = MAX_ATTEMPTS - failedAttempts;
       return res.status(401).json({
@@ -767,7 +1213,7 @@ app.post("/api/auth/login", async (req, res) => {
       {
         $set: { failedLoginAttempts: 0, updatedAt: new Date() },
         $unset: { lockUntil: "" },
-      }
+      },
     );
 
     res.status(200).json({
@@ -786,18 +1232,14 @@ app.post("/api/auth/google", async (req, res) => {
   try {
     const { name, email, googleId, image } = req.body;
 
-    if (!name || !email || !googleId)
-      return res.status(400).json({ error: "Missing required fields." });
+    if (!name || !email || !googleId) return res.status(400).json({ error: "Missing required fields." });
 
     const usersCollection = db.collection("users");
 
     let user = await usersCollection.findOne({ email });
 
     if (user) {
-      await usersCollection.updateOne(
-        { email },
-        { $set: { googleId, image, updatedAt: new Date() } }
-      );
+      await usersCollection.updateOne({ email }, { $set: { googleId, image, updatedAt: new Date() } });
 
       return res.status(200).json({
         id: user._id.toString(),
@@ -838,8 +1280,7 @@ app.get("/api/users/:id", async (req, res) => {
       { projection: { password: 0 } }
     );
 
-    if (!user)
-      return res.status(404).json({ error: "User not found." });
+    if (!user) return res.status(404).json({ error: "User not found." });
 
     res.status(200).json(user);
   } catch (err) {
@@ -853,28 +1294,25 @@ app.post("/api/auth/forgot-password", async (req, res) => {
   try {
     const { email } = req.body;
 
-    if (!email)
-      return res.status(400).json({ error: "Email is required." });
+    if (!email) return res.status(400).json({ error: "Email is required." });
 
     const usersCollection = db.collection("users");
     const user = await usersCollection.findOne({ email });
 
-    if (!user)
-      return res.status(200).json({ message: "If this email exists you will receive a reset link." });
+    if (!user) return res.status(200).json({ message: "If this email exists you will receive a reset link." });
 
     // OAuth user — no password to reset
     if (!user.password)
-      return res.status(400).json({ error: "This account uses Socials(e.g. Google, Github etc.) to sign in. Please use that to login instead." });
+      return res.status(400).json({
+        error: "This account uses Socials(e.g. Google, Github etc.) to sign in. Please use that to login instead.",
+      });
 
     // Generate a secure random token
     const resetToken = crypto.randomBytes(32).toString("hex");
     const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour expiry time
 
     // Save token to MongoDB
-    await usersCollection.updateOne(
-      { email },
-      { $set: { resetToken, resetTokenExpiry } }
-    );
+    await usersCollection.updateOne({ email }, { $set: { resetToken, resetTokenExpiry } });
 
     // Build reset link
     const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
@@ -921,13 +1359,12 @@ app.post("/api/auth/forgot-password", async (req, res) => {
   }
 });
 
-// RESET PASSWORD 
+// RESET PASSWORD
 app.post("/api/auth/reset-password", async (req, res) => {
   try {
     const { token, password } = req.body;
 
-    if (!token || !password)
-      return res.status(400).json({ error: "Token and password are required." });
+    if (!token || !password) return res.status(400).json({ error: "Token and password are required." });
 
     const usersCollection = db.collection("users");
 
@@ -937,8 +1374,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
       resetTokenExpiry: { $gt: new Date() }, // token must not be expired
     });
 
-    if (!user)
-      return res.status(400).json({ error: "Invalid or expired reset link. Please request a new one." });
+    if (!user) return res.status(400).json({ error: "Invalid or expired reset link. Please request a new one." });
 
     // Hash the new password
     const hashedPassword = await bcrypt.hash(password, 12);
@@ -949,7 +1385,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
       {
         $set: { password: hashedPassword, updatedAt: new Date() },
         $unset: { resetToken: "", resetTokenExpiry: "" }, // clean up token
-      }
+      },
     );
 
     res.status(200).json({ message: "Password reset successfully. You can now log in." });
@@ -967,19 +1403,22 @@ app.post("/api/resume/analyze", upload.single("resume"), async (req, res) => {
       return res.status(400).json({ error: "Please upload a PDF file." });
     }
 
-    // Extract text from PDF
-    const pdfParser = new PDF2Json();
-    const resumeText = await new Promise((resolve, reject) => {
-      pdfParser.on("pdfParser_dataReady", (data) => {
-        const text = data.Pages.map(page =>
-          page.Texts.map(t => decodeURIComponent(t.R[0].T)).join(" ")
-        ).join("\n");
-        resolve(text);
-      });
-      pdfParser.on("pdfParser_dataError", reject);
-      pdfParser.parseBuffer(req.file.buffer);
-    });
+// Extract text from PDF
+   const pdfParser = new PDF2Json();
+   const resumeText = await new Promise((resolve, reject) => {
+     pdfParser.on("pdfParser_dataReady", (data) => {
+       const text = data.Pages.map(page =>
+         page.Texts.map(t => decodeURIComponent(t.R[0].T)).join(" ")
+       ).join("\n");
+       resolve(text);
+     });
+     pdfParser.on("pdfParser_dataError", reject);
+     pdfParser.parseBuffer(req.file.buffer);
+   });
 
+app.listen(port, () => {
+    console.log(`Server running on ${port}`)
+})
     if (!resumeText || resumeText.trim().length === 0) {
       return res.status(400).json({ error: "Could not extract text from PDF. Make sure it is not a scanned image." });
     }
@@ -1040,7 +1479,7 @@ app.post("/api/resume/analyze", upload.single("resume"), async (req, res) => {
   }
 });
 
-//  Start Server 
+//  Start Server
 connectDB().then(() => {
   app.listen(port, () => console.log(`🚀 Server running on port ${port}`));
 });
