@@ -33,7 +33,10 @@ const app = express();
 const port = process.env.PORT || 5000;
 
 // Middleware
-const allowedOrigins = ["http://localhost:3000","http://localhost:5000", process.env.NEXT_PUBLIC_APP_URL, process.env.NEXT_PUBLIC_BACKEND_URL];
+const allowedOrigins = ["http://localhost:3000",
+                        "http://localhost:5000", 
+                        process.env.NEXT_PUBLIC_APP_URL, 
+                        process.env.NEXT_PUBLIC_BACKEND_URL];
 
 app.use(
   cors({
@@ -1416,9 +1419,6 @@ app.post("/api/resume/analyze", upload.single("resume"), async (req, res) => {
      pdfParser.parseBuffer(req.file.buffer);
    });
 
-app.listen(port, () => {
-    console.log(`Server running on ${port}`)
-})
     if (!resumeText || resumeText.trim().length === 0) {
       return res.status(400).json({ error: "Could not extract text from PDF. Make sure it is not a scanned image." });
     }
