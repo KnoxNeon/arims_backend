@@ -879,72 +879,192 @@ app.post("/api/admin/questions/bulk", async (req, res) => {
  * auth related apis
  ****************************/
 
+
+
 // //  Resume Genarator //
 
+
+
 app.post("/api/resume-builder/generate", (req, res) => {
-    try {
-        const { personalInfo, summary, skills, experiences, projects, certifications } = req.body;
+  try {
 
-        const doc = new PDFDocument({ margin: 50 });
+    const {
+      personalInfo = {},
+      summary = "",
+      skills = "",
+      experiences = [],
+      projects = [],
+      certifications = []
+    } = req.body;
 
-        res.setHeader("Content-Disposition", "attachment; filename=resume.pdf");
-        res.setHeader("Content-Type", "application/pdf");
+    const name = (personalInfo.fullName || "resume")
+      .replace(/\s+/g, "_")
+      .toLowerCase();
 
-        doc.pipe(res);
+    const fileName = `${name}_resume.pdf`;
 
-        // Resonal Info
-        doc.fontSize(24).fillColor("#111827").text(personalInfo.fullName || "Your Name", { align: "center" });
-        doc.fontSize(10).fillColor("#6B7280")
-            .text(`${personalInfo.email || ""} | ${personalInfo.phone || ""} | ${personalInfo.location || ""}`, { align: "center" });
-        doc.moveDown(1.5);
+    const doc = new PDFDocument({ margin: 50 });
 
-        // PROFESSIONAL 
-        doc.fontSize(14).fillColor("#111827").text("PROFESSIONAL SUMMARY", { underline: true });
-        doc.moveDown(0.5);
-        doc.fontSize(11).fillColor("#374151").text(summary || "No summary provided.", { lineGap: 4 });
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${fileName}"`
+    );
+
+    res.setHeader("Content-Type", "application/pdf");
+
+    doc.pipe(res);
+
+    // ===== HEADER =====
+
+    doc
+      .fontSize(24)
+      .fillColor("#111827")
+      .text(personalInfo.fullName || "Your Name", { align: "center" });
+
+    doc
+      .fontSize(10)
+      .fillColor("#6B7280")
+      .text(
+        `${personalInfo.email || ""} | ${personalInfo.phone || ""} | ${personalInfo.location || ""}`,
+        { align: "center" }
+      );
+
+    doc.moveDown(1.5);
+
+    // ===== SUMMARY =====
+
+    doc
+      .fontSize(14)
+      .fillColor("#111827")
+      .text("PROFESSIONAL SUMMARY", { underline: true });
+
+    doc.moveDown(0.5);
+
+    doc
+      .fontSize(11)
+      .fillColor("#374151")
+      .text(summary || "No summary provided.", { lineGap: 4 });
+
+    doc.moveDown();
+
+    // ===== SKILLS =====
+
+    doc
+      .fontSize(14)
+      .fillColor("#111827")
+      .text("SKILLS", { underline: true });
+
+    doc.moveDown(0.5);
+
+    (skills || "")
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean)
+      .forEach(skill => {
+        doc.fontSize(11).text(`• ${skill}`);
+      });
+
+    doc.moveDown();
+
+    // ===== EXPERIENCE =====
+
+    doc
+      .fontSize(14)
+      .fillColor("#111827")
+      .text("WORK EXPERIENCE", { underline: true });
+
+    doc.moveDown(0.5);
+
+    experiences.forEach(exp => {
+      if (!exp.company && !exp.role) return;
+
+      doc
+        .fontSize(12)
+        .fillColor("#111827")
+        .text(`${exp.role || "Role"} — ${exp.company || "Company"}`);
+
+      doc
+        .fontSize(10)
+        .fillColor("#6B7280")
+        .text(`(${exp.startDate || "Start"} - ${exp.endDate || "End"})`);
+
+      doc
+        .fontSize(11)
+        .fillColor("#374151")
+        .text(exp.description || "", { lineGap: 3 });
+
+      doc.moveDown();
+    });
+
+    // ===== PROJECTS =====
+
+    if (projects.length > 0) {
+
+      doc
+        .fontSize(14)
+        .fillColor("#111827")
+        .text("PROJECTS", { underline: true });
+
+      doc.moveDown(0.5);
+
+      projects.forEach(proj => {
+
+        if (!proj.name) return;
+
+        doc.fontSize(12).text(proj.name);
+
+        if (proj.link) {
+          doc
+            .fontSize(10)
+            .fillColor("#2563EB")
+            .text(proj.link);
+        }
+
+        doc
+          .fontSize(11)
+          .fillColor("#374151")
+          .text(proj.description || "");
+
         doc.moveDown();
+      });
 
-        // SKILLS 
-        doc.fontSize(14).fillColor("#111827").text("SKILLS", { underline: true });
-        doc.moveDown(0.5);
-        skills.split(",").map(s => s.trim()).filter(s => s).forEach(skill => doc.fontSize(11).text(`• ${skill}`));
-        doc.moveDown();
-
-        //  WORK EXPERIENCE 
-        doc.fontSize(14).fillColor("#111827").text("WORK EXPERIENCE", { underline: true });
-        doc.moveDown(0.5);
-        experiences.forEach(exp => {
-            if (!exp.company && !exp.role) return;
-            doc.fontSize(12).fillColor("#111827").text(`${exp.role || "Role"} — ${exp.company || "Company"}`);
-            doc.fontSize(10).fillColor("#6B7280").text(`(${exp.startDate || "Start"} - ${exp.endDate || "End"})`);
-            doc.fontSize(11).fillColor("#374151").text(exp.description || "No description provided.", { lineGap: 3 });
-            doc.moveDown();
-        });
-
-        //  PROJECTS 
-        doc.fontSize(14).fillColor("#111827").text("PROJECTS", { underline: true });
-        doc.moveDown(0.5);
-        projects.forEach(proj => {
-            if (!proj.name) return;
-            doc.fontSize(12).fillColor("#111827").text(proj.name);
-            if (proj.link) doc.fontSize(10).fillColor("#2563EB").text(proj.link);
-            doc.fontSize(11).fillColor("#374151").text(proj.description || "");
-            doc.moveDown();
-        });
-
-        // CERTIFICATIONS 
-        doc.fontSize(14).fillColor("#111827").text("CERTIFICATIONS", { underline: true });
-        doc.moveDown(0.5);
-        certifications.forEach(cert => {
-            if (!cert.name) return;
-            doc.fontSize(11).text(`• ${cert.name} — ${cert.org || ""} (${cert.date || ""})`);
-        });
-
-        doc.end();
-    } catch (err) {
-        console.error("PDF ERROR:", err);
-        res.status(500).json({ success: false, error: err.message });
     }
+
+    // ===== CERTIFICATIONS =====
+
+    if (certifications.length > 0) {
+
+      doc
+        .fontSize(14)
+        .fillColor("#111827")
+        .text("CERTIFICATIONS", { underline: true });
+
+      doc.moveDown(0.5);
+
+      certifications.forEach(cert => {
+
+        if (!cert.name) return;
+
+        doc
+          .fontSize(11)
+          .fillColor("#374151")
+          .text(`• ${cert.name} — ${cert.org || ""} (${cert.date || ""})`);
+      });
+
+    }
+
+    doc.end();
+
+  } catch (err) {
+
+    console.error("PDF ERROR:", err);
+
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+
+  }
 });
 
 // _________________DASHBOARD____________________
@@ -1001,6 +1121,7 @@ app.put("/api/users/:id", async (req, res) => {
     res.status(500).json({ error: "Something went wrong." });
   }
 });
+
 
 
 // REGISTER
