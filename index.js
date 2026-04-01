@@ -482,191 +482,176 @@ app.post("/api/mcq/submit/:id", async (req, res) => {
 
 
 
-// //  Resume Genarator //
 
 
+// // Resume Generator API //
 
 app.post("/api/resume-builder/generate", (req, res) => {
-  try {
+    try {
+        const {
+            personalInfo,
+            summary,
+            skills,
+            experiences,
+            projects,
+            certifications,
+            languages,
+            hobbies
+        } = req.body;
 
-    const {
-      personalInfo = {},
-      summary = "",
-      skills = "",
-      experiences = [],
-      projects = [],
-      certifications = []
-    } = req.body;
+        // Initialize A4 Document
+        const doc = new PDFDocument({ margin: 0, size: 'A4' });
 
-    const name = (personalInfo.fullName || "resume")
-      .replace(/\s+/g, "_")
-      .toLowerCase();
+        // Updated Grayscale Palette
+        const colors = {
+            sidebar: "#f3f4f6",     
+            sidebarText: "#1f2937", 
+            sidebarSubText: "#4b5563",
+            accent: "#000000",      
+            heading: "#111827",    
+            body: "#374151",        
+            linkGray: "#6b7280"     
+        };
 
-    const fileName = `${name}_resume.pdf`;
+        const sidebarWidth = 170;
+        const mainX = 195;
+        const contentWidth = 360;
 
-    const doc = new PDFDocument({ margin: 50 });
+        // Filename setup
+        const name = (personalInfo.fullName || "resume")
+            .trim()
+            .replace(/\s+/g, "_")
+            .toLowerCase();
 
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${fileName}"`
-    );
+        res.setHeader("Content-Disposition", `attachment; filename="${name}.pdf"`);
+        res.setHeader("Content-Type", "application/pdf");
+        doc.pipe(res);
 
-    res.setHeader("Content-Type", "application/pdf");
+        // --- 1. SIDEBAR (Grayscale) ---
+        doc.rect(0, 0, sidebarWidth, 841.89).fill(colors.sidebar);
+        let sideY = 50;
 
-    doc.pipe(res);
+        // Helper for Sidebar Titles
+        const addSidebarTitle = (title) => {
+            doc.fillColor(colors.sidebarText).fontSize(11).font('Helvetica-Bold').text(title.toUpperCase(), 20, sideY);
+            sideY += 20;
+        };
 
-    // ===== HEADER =====
+        // CONTACT
+        addSidebarTitle("Contact");
+        doc.fontSize(9).font('Helvetica');
+        [personalInfo.phone, personalInfo.email, personalInfo.location].forEach(text => {
+            if (text) {
+                doc.fillColor(colors.sidebarSubText).text(text, 20, sideY, { width: sidebarWidth - 40 });
+                sideY += 20;
+            }
+        });
 
-    doc
-      .fontSize(24)
-      .fillColor("#111827")
-      .text(personalInfo.fullName || "Your Name", { align: "center" });
-
-    doc
-      .fontSize(10)
-      .fillColor("#6B7280")
-      .text(
-        `${personalInfo.email || ""} | ${personalInfo.phone || ""} | ${personalInfo.location || ""}`,
-        { align: "center" }
-      );
-
-    doc.moveDown(1.5);
-
-    // ===== SUMMARY =====
-
-    doc
-      .fontSize(14)
-      .fillColor("#111827")
-      .text("PROFESSIONAL SUMMARY", { underline: true });
-
-    doc.moveDown(0.5);
-
-    doc
-      .fontSize(11)
-      .fillColor("#374151")
-      .text(summary || "No summary provided.", { lineGap: 4 });
-
-    doc.moveDown();
-
-    // ===== SKILLS =====
-
-    doc
-      .fontSize(14)
-      .fillColor("#111827")
-      .text("SKILLS", { underline: true });
-
-    doc.moveDown(0.5);
-
-    (skills || "")
-      .split(",")
-      .map(s => s.trim())
-      .filter(Boolean)
-      .forEach(skill => {
-        doc.fontSize(11).text(`• ${skill}`);
-      });
-
-    doc.moveDown();
-
-    // ===== EXPERIENCE =====
-
-    doc
-      .fontSize(14)
-      .fillColor("#111827")
-      .text("WORK EXPERIENCE", { underline: true });
-
-    doc.moveDown(0.5);
-
-    experiences.forEach(exp => {
-      if (!exp.company && !exp.role) return;
-
-      doc
-        .fontSize(12)
-        .fillColor("#111827")
-        .text(`${exp.role || "Role"} — ${exp.company || "Company"}`);
-
-      doc
-        .fontSize(10)
-        .fillColor("#6B7280")
-        .text(`(${exp.startDate || "Start"} - ${exp.endDate || "End"})`);
-
-      doc
-        .fontSize(11)
-        .fillColor("#374151")
-        .text(exp.description || "", { lineGap: 3 });
-
-      doc.moveDown();
-    });
-
-    // ===== PROJECTS =====
-
-    if (projects.length > 0) {
-
-      doc
-        .fontSize(14)
-        .fillColor("#111827")
-        .text("PROJECTS", { underline: true });
-
-      doc.moveDown(0.5);
-
-      projects.forEach(proj => {
-
-        if (!proj.name) return;
-
-        doc.fontSize(12).text(proj.name);
-
-        if (proj.link) {
-          doc
-            .fontSize(10)
-            .fillColor("#2563EB")
-            .text(proj.link);
+        if (personalInfo.portfolio || personalInfo.github) {
+            const link = personalInfo.portfolio || personalInfo.github;
+            doc.fillColor(colors.sidebarText).text("Links ", 20, sideY, { link: link, underline: true });
+            sideY += 30;
         }
 
-        doc
-          .fontSize(11)
-          .fillColor("#374151")
-          .text(proj.description || "");
+        // LANGUAGES 
+        if (languages) {
+            sideY += 10;
+            addSidebarTitle("Languages");
+            doc.fillColor(colors.sidebarSubText).fontSize(9).font('Helvetica').text(languages, 20, sideY, { width: sidebarWidth - 40 });
+            sideY += doc.heightOfString(languages, { width: sidebarWidth - 40 }) + 25;
+        }
 
-        doc.moveDown();
-      });
+        // SKILLS
+        if (skills) {
+            addSidebarTitle("Skills");
+            doc.fillColor(colors.sidebarSubText).fontSize(9).font('Helvetica');
+            skills.split(',').forEach(skill => {
+                doc.text(`• ${skill.trim()}`, 20, sideY);
+                sideY += 15;
+            });
+            sideY += 15;
+        }
 
+        // HOBBIES 
+        if (hobbies) {
+            addSidebarTitle("Hobbies");
+            doc.fillColor(colors.sidebarSubText).fontSize(9).text(hobbies, 20, sideY, { width: sidebarWidth - 40 });
+        }
+
+        // --- 2. MAIN CONTENT (Grayscale) ---
+        let mainY = 50;
+
+        // Header
+        doc.fillColor(colors.heading).fontSize(26).font('Helvetica-Bold').text((personalInfo.fullName || "NAME").toUpperCase(), mainX, mainY);
+        doc.fillColor(colors.sidebarSubText).fontSize(12).font('Helvetica').text((personalInfo.jobTitle || "DEVELOPER").toUpperCase(), mainX, mainY + 28);
+        
+        // Simple Black Divider
+        doc.moveTo(mainX, mainY + 45).lineTo(550, mainY + 45).lineWidth(1).stroke(colors.heading);
+        mainY += 75;
+
+        // PROFILE/SUMMARY
+        if (summary) {
+            doc.fillColor(colors.heading).fontSize(13).font('Helvetica-Bold').text("PROFILE", mainX, mainY);
+            mainY += 18;
+            doc.fillColor(colors.body).fontSize(9.5).font('Helvetica').text(summary, mainX, mainY, { width: contentWidth, lineGap: 2 });
+            mainY += doc.heightOfString(summary, { width: contentWidth }) + 30;
+        }
+
+        const renderSection = (title, items, isExp) => {
+            if (!items || items.length === 0 || (!items[0].company && !items[0].name)) return;
+            
+            doc.fillColor(colors.heading).fontSize(13).font('Helvetica-Bold').text(title, mainX, mainY);
+            mainY += 22;
+
+            items.forEach(item => {
+                const itemName = isExp ? item.company : item.name;
+                if (!itemName) return;
+
+                // Grayscale bullet point
+                doc.circle(mainX - 12, mainY + 5, 2.5).fill(colors.heading);
+                doc.fillColor(colors.heading).fontSize(11).font('Helvetica-Bold').text(itemName, mainX, mainY);
+
+                if (item.link) {
+                    mainY += 14;
+                    doc.fillColor(colors.linkGray).fontSize(8.5).font('Helvetica').text("View Project", mainX, mainY, { link: item.link, underline: true });
+                }
+
+                mainY += 14;
+                if (isExp && (item.role || item.startDate)) {
+                    const subtitle = item.role + (item.startDate ? ` (${item.startDate} - ${item.endDate || 'Present'})` : "");
+                    doc.fillColor(colors.body).fontSize(9.5).font('Helvetica-Oblique').text(subtitle, mainX, mainY);
+                    mainY += 14;
+                }
+
+                if (item.description) {
+                    doc.fillColor(colors.body).fontSize(9).font('Helvetica').text(item.description, mainX, mainY, { width: contentWidth });
+                    mainY += doc.heightOfString(item.description, { width: contentWidth }) + 20;
+                } else {
+                    mainY += 10;
+                }
+            });
+        };
+
+        renderSection("WORK EXPERIENCE", experiences, true);
+        renderSection("PROJECTS", projects, false);
+
+        // CERTIFICATIONS
+        if (certifications && certifications.length > 0 && certifications[0].name) {
+            doc.fillColor(colors.heading).fontSize(13).font('Helvetica-Bold').text("CERTIFICATIONS", mainX, mainY);
+            mainY += 18;
+            certifications.forEach(cert => {
+                doc.fillColor(colors.body).fontSize(9.5).text(`• ${cert.name} - ${cert.org}`, mainX, mainY);
+                mainY += 16;
+            });
+        }
+
+        doc.end();
+    } catch (err) { 
+        console.error(err);
+        res.status(500).send("Generation Error"); 
     }
-
-    // ===== CERTIFICATIONS =====
-
-    if (certifications.length > 0) {
-
-      doc
-        .fontSize(14)
-        .fillColor("#111827")
-        .text("CERTIFICATIONS", { underline: true });
-
-      doc.moveDown(0.5);
-
-      certifications.forEach(cert => {
-
-        if (!cert.name) return;
-
-        doc
-          .fontSize(11)
-          .fillColor("#374151")
-          .text(`• ${cert.name} — ${cert.org || ""} (${cert.date || ""})`);
-      });
-
-    }
-
-    doc.end();
-
-  } catch (err) {
-
-    console.error("PDF ERROR:", err);
-
-    res.status(500).json({
-      success: false,
-      error: err.message
-    });
-
-  }
 });
+
 
 
 
@@ -740,7 +725,7 @@ app.post("/api/auth/login", async (req, res) => {
           {
             $set: {
               failedLoginAttempts: failedAttempts,
-              lockUntil: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+              lockUntil: new Date(Date.now() + 15 * 60 * 1000), 
             },
           }
         );
@@ -749,8 +734,7 @@ app.post("/api/auth/login", async (req, res) => {
         });
       }
 
-      // Not locked yet — increment failed attempts and warn user
-      await usersCollection.updateOne(
+        await usersCollection.updateOne(
         { email },
         { $set: { failedLoginAttempts: failedAttempts } }
       );
