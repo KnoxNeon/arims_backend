@@ -1001,59 +1001,175 @@ app.post("/api/resume-builder/generate", (req, res) => {
 
     // ===== PROJECTS =====
 
-    if (projects.length > 0) {
 
-      doc
-        .fontSize(14)
-        .fillColor("#111827")
-        .text("PROJECTS", { underline: true });
 
-      doc.moveDown(0.5);
 
-      projects.forEach(proj => {
 
-        if (!proj.name) return;
+// // Resume Generator API //
 
-        doc.fontSize(12).text(proj.name);
+app.post("/api/resume-builder/generate", (req, res) => {
+    try {
+        const {
+            personalInfo,
+            summary,
+            skills,
+            experiences,
+            projects,
+            certifications,
+            languages,
+            hobbies
+        } = req.body;
 
-        if (proj.link) {
-          doc
-            .fontSize(10)
-            .fillColor("#2563EB")
-            .text(proj.link);
+        // Initialize A4 Document
+        const doc = new PDFDocument({ margin: 0, size: 'A4' });
+
+        // Updated Grayscale Palette
+        const colors = {
+            sidebar: "#f3f4f6",     
+            sidebarText: "#1f2937", 
+            sidebarSubText: "#4b5563",
+            accent: "#000000",      
+            heading: "#111827",    
+            body: "#374151",        
+            linkGray: "#6b7280"     
+        };
+
+        const sidebarWidth = 170;
+        const mainX = 195;
+        const contentWidth = 360;
+
+        // Filename setup
+        const name = (personalInfo.fullName || "resume")
+            .trim()
+            .replace(/\s+/g, "_")
+            .toLowerCase();
+
+        res.setHeader("Content-Disposition", `attachment; filename="${name}.pdf"`);
+        res.setHeader("Content-Type", "application/pdf");
+        doc.pipe(res);
+
+        // --- 1. SIDEBAR (Grayscale) ---
+        doc.rect(0, 0, sidebarWidth, 841.89).fill(colors.sidebar);
+        let sideY = 50;
+
+        // Helper for Sidebar Titles
+        const addSidebarTitle = (title) => {
+            doc.fillColor(colors.sidebarText).fontSize(11).font('Helvetica-Bold').text(title.toUpperCase(), 20, sideY);
+            sideY += 20;
+        };
+
+        // CONTACT
+        addSidebarTitle("Contact");
+        doc.fontSize(9).font('Helvetica');
+        [personalInfo.phone, personalInfo.email, personalInfo.location].forEach(text => {
+            if (text) {
+                doc.fillColor(colors.sidebarSubText).text(text, 20, sideY, { width: sidebarWidth - 40 });
+                sideY += 20;
+            }
+        });
+
+        if (personalInfo.portfolio || personalInfo.github) {
+            const link = personalInfo.portfolio || personalInfo.github;
+            doc.fillColor(colors.sidebarText).text("Links ", 20, sideY, { link: link, underline: true });
+            sideY += 30;
         }
 
-        doc
-          .fontSize(11)
-          .fillColor("#374151")
-          .text(proj.description || "");
+        // LANGUAGES 
+        if (languages) {
+            sideY += 10;
+            addSidebarTitle("Languages");
+            doc.fillColor(colors.sidebarSubText).fontSize(9).font('Helvetica').text(languages, 20, sideY, { width: sidebarWidth - 40 });
+            sideY += doc.heightOfString(languages, { width: sidebarWidth - 40 }) + 25;
+        }
 
-        doc.moveDown();
-      });
+        // SKILLS
+        if (skills) {
+            addSidebarTitle("Skills");
+            doc.fillColor(colors.sidebarSubText).fontSize(9).font('Helvetica');
+            skills.split(',').forEach(skill => {
+                doc.text(`• ${skill.trim()}`, 20, sideY);
+                sideY += 15;
+            });
+            sideY += 15;
+        }
 
-    }
+        // HOBBIES 
+        if (hobbies) {
+            addSidebarTitle("Hobbies");
+            doc.fillColor(colors.sidebarSubText).fontSize(9).text(hobbies, 20, sideY, { width: sidebarWidth - 40 });
+        }
 
-    // ===== CERTIFICATIONS =====
+        // --- 2. MAIN CONTENT (Grayscale) ---
+        let mainY = 50;
 
-    if (certifications.length > 0) {
+        // Header
+        doc.fillColor(colors.heading).fontSize(26).font('Helvetica-Bold').text((personalInfo.fullName || "NAME").toUpperCase(), mainX, mainY);
+        doc.fillColor(colors.sidebarSubText).fontSize(12).font('Helvetica').text((personalInfo.jobTitle || "DEVELOPER").toUpperCase(), mainX, mainY + 28);
+        
+        // Simple Black Divider
+        doc.moveTo(mainX, mainY + 45).lineTo(550, mainY + 45).lineWidth(1).stroke(colors.heading);
+        mainY += 75;
 
-      doc
-        .fontSize(14)
-        .fillColor("#111827")
-        .text("CERTIFICATIONS", { underline: true });
+        // PROFILE/SUMMARY
+        if (summary) {
+            doc.fillColor(colors.heading).fontSize(13).font('Helvetica-Bold').text("PROFILE", mainX, mainY);
+            mainY += 18;
+            doc.fillColor(colors.body).fontSize(9.5).font('Helvetica').text(summary, mainX, mainY, { width: contentWidth, lineGap: 2 });
+            mainY += doc.heightOfString(summary, { width: contentWidth }) + 30;
+        }
 
-      doc.moveDown(0.5);
+        const renderSection = (title, items, isExp) => {
+            if (!items || items.length === 0 || (!items[0].company && !items[0].name)) return;
+            
+            doc.fillColor(colors.heading).fontSize(13).font('Helvetica-Bold').text(title, mainX, mainY);
+            mainY += 22;
 
-      certifications.forEach(cert => {
+            items.forEach(item => {
+                const itemName = isExp ? item.company : item.name;
+                if (!itemName) return;
 
-        if (!cert.name) return;
+                // Grayscale bullet point
+                doc.circle(mainX - 12, mainY + 5, 2.5).fill(colors.heading);
+                doc.fillColor(colors.heading).fontSize(11).font('Helvetica-Bold').text(itemName, mainX, mainY);
 
-        doc
-          .fontSize(11)
-          .fillColor("#374151")
-          .text(`• ${cert.name} — ${cert.org || ""} (${cert.date || ""})`);
-      });
+                if (item.link) {
+                    mainY += 14;
+                    doc.fillColor(colors.linkGray).fontSize(8.5).font('Helvetica').text("View Project", mainX, mainY, { link: item.link, underline: true });
+                }
 
+                mainY += 14;
+                if (isExp && (item.role || item.startDate)) {
+                    const subtitle = item.role + (item.startDate ? ` (${item.startDate} - ${item.endDate || 'Present'})` : "");
+                    doc.fillColor(colors.body).fontSize(9.5).font('Helvetica-Oblique').text(subtitle, mainX, mainY);
+                    mainY += 14;
+                }
+
+                if (item.description) {
+                    doc.fillColor(colors.body).fontSize(9).font('Helvetica').text(item.description, mainX, mainY, { width: contentWidth });
+                    mainY += doc.heightOfString(item.description, { width: contentWidth }) + 20;
+                } else {
+                    mainY += 10;
+                }
+            });
+        };
+
+        renderSection("WORK EXPERIENCE", experiences, true);
+        renderSection("PROJECTS", projects, false);
+
+        // CERTIFICATIONS
+        if (certifications && certifications.length > 0 && certifications[0].name) {
+            doc.fillColor(colors.heading).fontSize(13).font('Helvetica-Bold').text("CERTIFICATIONS", mainX, mainY);
+            mainY += 18;
+            certifications.forEach(cert => {
+                doc.fillColor(colors.body).fontSize(9.5).text(`• ${cert.name} - ${cert.org}`, mainX, mainY);
+                mainY += 16;
+            });
+        }
+
+        doc.end();
+    } catch (err) { 
+        console.error(err);
+        res.status(500).send("Generation Error"); 
     }
 
     doc.end();
@@ -1127,6 +1243,7 @@ app.put("/api/users/:id", async (req, res) => {
 
 
 
+
 // REGISTER
 app.post("/api/auth/register", async (req, res) => {
   try {
@@ -1192,7 +1309,7 @@ app.post("/api/auth/login", async (req, res) => {
           {
             $set: {
               failedLoginAttempts: failedAttempts,
-              lockUntil: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+              lockUntil: new Date(Date.now() + 15 * 60 * 1000), 
             },
           },
         );
@@ -1201,8 +1318,10 @@ app.post("/api/auth/login", async (req, res) => {
         });
       }
 
-      // Not locked yet — increment failed attempts and warn user
-      await usersCollection.updateOne({ email }, { $set: { failedLoginAttempts: failedAttempts } });
+        await usersCollection.updateOne(
+        { email },
+        { $set: { failedLoginAttempts: failedAttempts } }
+      );
 
       const attemptsLeft = MAX_ATTEMPTS - failedAttempts;
       return res.status(401).json({
@@ -1216,7 +1335,7 @@ app.post("/api/auth/login", async (req, res) => {
       {
         $set: { failedLoginAttempts: 0, updatedAt: new Date() },
         $unset: { lockUntil: "" },
-      },
+      }
     );
 
     res.status(200).json({
@@ -1406,18 +1525,18 @@ app.post("/api/resume/analyze", upload.single("resume"), async (req, res) => {
       return res.status(400).json({ error: "Please upload a PDF file." });
     }
 
-// Extract text from PDF
-   const pdfParser = new PDF2Json();
-   const resumeText = await new Promise((resolve, reject) => {
-     pdfParser.on("pdfParser_dataReady", (data) => {
-       const text = data.Pages.map(page =>
-         page.Texts.map(t => decodeURIComponent(t.R[0].T)).join(" ")
-       ).join("\n");
-       resolve(text);
-     });
-     pdfParser.on("pdfParser_dataError", reject);
-     pdfParser.parseBuffer(req.file.buffer);
-   });
+    // Extract text from PDF
+    const pdfParser = new PDF2Json();
+    const resumeText = await new Promise((resolve, reject) => {
+      pdfParser.on("pdfParser_dataReady", (data) => {
+        const text = data.Pages.map(page =>
+          page.Texts.map(t => decodeURIComponent(t.R[0].T)).join(" ")
+        ).join("\n");
+        resolve(text);
+      });
+      pdfParser.on("pdfParser_dataError", reject);
+      pdfParser.parseBuffer(req.file.buffer);
+    });
 
     if (!resumeText || resumeText.trim().length === 0) {
       return res.status(400).json({ error: "Could not extract text from PDF. Make sure it is not a scanned image." });
